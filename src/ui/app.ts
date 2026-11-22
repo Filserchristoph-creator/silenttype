@@ -26,7 +26,15 @@ import type {
   RecognitionStatus,
 } from "../core/types.ts";
 
-type View = "input" | "training" | "eval" | "about" | "challenge" | "learn" | "keyboard";
+type View =
+  | "input"
+  | "vision"
+  | "training"
+  | "eval"
+  | "about"
+  | "challenge"
+  | "learn"
+  | "keyboard";
 
 interface ChallengeState {
   phase: "train" | "test" | "done";
@@ -48,7 +56,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v18 · sichtbares Lernen";
+const BUILD = "v19 · Vision-Seite";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -176,6 +184,15 @@ export class SilentTypeApp {
       this.startJourney();
     };
     card.appendChild(btn);
+    const visBtn = el("button", "btn ghost") as HTMLButtonElement;
+    visBtn.textContent = "Erst die Vision ansehen";
+    visBtn.style.width = "100%";
+    visBtn.onclick = () => {
+      localStorage.setItem("st_seen_intro", "1");
+      ov.remove();
+      this.switchView("vision");
+    };
+    card.appendChild(visBtn);
     ov.appendChild(card);
     this.root.appendChild(ov);
   }
@@ -197,6 +214,7 @@ export class SilentTypeApp {
     const nav = el("div", "nav");
     for (const [key, label] of [
       ["input", "Eingabe"],
+      ["vision", "Vision"],
       ["training", "Training"],
       ["eval", "Auswertung"],
       ["about", "Info"],
@@ -250,16 +268,20 @@ export class SilentTypeApp {
         this.view === "challenge" || this.view === "learn" || this.view === "keyboard"
           ? "none"
           : "inline-flex";
-    // nav active state
+    // nav active state + hide power tabs for testers (only in Profi-Ansicht).
     this.root.querySelectorAll(".nav button").forEach((b) => {
       const btn = b as HTMLButtonElement;
-      btn.classList.toggle("active", btn.dataset.view === this.view);
+      const v = btn.dataset.view;
+      const powerOnly = v === "training" || v === "eval";
+      btn.style.display = powerOnly && !this.devMode ? "none" : "";
+      btn.classList.toggle("active", v === this.view);
     });
     const content = this.root.querySelector("#content") as HTMLElement;
     content.innerHTML = "";
     if (this.view === "challenge") content.appendChild(this.renderChallenge());
     else if (this.view === "learn") content.appendChild(this.renderLearn());
     else if (this.view === "keyboard") content.appendChild(this.renderKeyboard());
+    else if (this.view === "vision") content.appendChild(this.renderVision());
     else if (this.view === "input") content.appendChild(this.renderInput());
     else if (this.view === "training") content.appendChild(this.renderTraining());
     else if (this.view === "eval") content.appendChild(this.renderEval());
@@ -1724,6 +1746,59 @@ export class SilentTypeApp {
   }
 
   // ---------------------------------------------------------------- about ----
+  // ----------------------------------------------------------- vision page ---
+  private renderVision(): HTMLElement {
+    const wrap = el("div", "stage-wrap");
+
+    const hero = el("div", "card vision-hero");
+    hero.innerHTML = `
+      <div class="vision-logo brand-logo">${logoSvg()}</div>
+      <h1 class="vision-title">Der Diktier-Knopf.<br/>Aber <span style="color:var(--accent)">lautlos</span>. Überall.</h1>
+      <p class="muted" style="font-size:16px;max-width:560px;margin:12px auto 0">Sprich mit deinem Handy, ohne ein Wort zu sagen – nur mit den Lippen. ${APP_NAME} liest deine Lippenbewegung und macht daraus Text.</p>`;
+    wrap.appendChild(hero);
+
+    const h = el("h2");
+    h.style.textAlign = "center";
+    h.textContent = "Wo dir understand U hilft";
+    wrap.appendChild(h);
+
+    const grid = el("div", "usecase-grid");
+    const cases: [string, string, string][] = [
+      ["🚆", "Im Zug & Büro", "Lange Nachrichten tippen, ohne jemanden zu stören – und ohne laut zu sprechen."],
+      ["🎓", "In der Vorlesung", "Leise mitschreiben, mitten im Hörsaal."],
+      ["🎧", "Auf dem Konzert", "Zu laut, um ein Wort zu verstehen? Schick der Familie trotzdem eine Nachricht."],
+      ["🚕", "Im Taxi", "Diktiere privat – niemand hört mit."],
+      ["🚗", "Beim Autofahren", "Hände am Steuer, Blick auf die Straße."],
+      ["♿", "Barrierefreiheit", "Für Menschen, die nicht sprechen können oder wollen."],
+    ];
+    for (const [icon, title, text] of cases) {
+      const c = el("div", "card usecase");
+      c.innerHTML = `<div class="uc-icon">${icon}</div><div class="uc-title">${title}</div><div class="uc-text muted">${text}</div>`;
+      grid.appendChild(c);
+    }
+    wrap.appendChild(grid);
+
+    const future = el("div", "card vision-future");
+    future.innerHTML = `
+      <div class="vf-eyebrow">Die Zukunft</div>
+      <h2>Vielleicht brauchen wir bald gar keine Tastatur mehr.</h2>
+      <p>understand U könnte der neue Standard werden: auf <b>jedem Handy</b>, in <b>jeder App</b> – statt des Mikrofon-Knopfs. Und irgendwann reicht vielleicht ein Blick auf deine <b>Apple Watch</b>. Eine neue Art, mit Technik zu sprechen. <b>Lautlos.</b></p>`;
+    wrap.appendChild(future);
+
+    const cta = el("button", "btn big") as HTMLButtonElement;
+    cta.style.width = "100%";
+    cta.textContent = "Jetzt selbst erleben ▶";
+    cta.onclick = () => this.startJourney();
+    wrap.appendChild(cta);
+
+    const note = el("p", "muted");
+    note.style.cssText = "text-align:center;font-size:12px";
+    note.textContent =
+      "Heute ein funktionierender Prototyp, der die Idee beweist – der Weg zum Produkt für alle ist der nächste Schritt.";
+    wrap.appendChild(note);
+    return wrap;
+  }
+
   private renderAbout(): HTMLElement {
     const wrap = el("div", "stage-wrap");
     const card = el("div", "card");
