@@ -268,6 +268,35 @@ h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 18px 0 
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.big { padding: 15px 20px; font-size: 16px; }
 
+/* ---------- Keyboard demo ---------- */
+.kb-composer { min-height: 92px; }
+.kb-label {
+  font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.1em; font-weight: 600;
+}
+.kb-text { font-size: 19px; line-height: 1.5; margin-top: 6px; min-height: 28px; }
+.kb-placeholder { color: var(--text-dim); }
+.kb-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 16px;
+  padding: 10px 16px; box-shadow: 0 2px 12px -6px rgba(20,20,35,0.12);
+}
+.kb-hint { font-size: 12px; color: var(--text-dim); flex: 1; }
+.kb-key {
+  width: 62px; height: 62px; border-radius: 50%; flex: none;
+  background: var(--accent); color: #fff; border: none;
+  display: grid; place-items: center; cursor: pointer;
+  box-shadow: 0 8px 20px -6px rgba(79,70,229,0.6);
+  transition: transform .12s ease;
+}
+.kb-key svg { width: 32px; height: 32px; }
+.kb-key:active { transform: scale(0.94); }
+.kb-key.listening { animation: kbpulse 1.2s infinite; }
+@keyframes kbpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79,70,229,0.55); }
+  50% { box-shadow: 0 0 0 15px rgba(79,70,229,0); }
+}
+
 /* ---------- Hands-free toggle ---------- */
 .auto-toggle {
   display: inline-flex; align-items: center; gap: 10px; align-self: center;

@@ -26,7 +26,7 @@ import type {
   RecognitionStatus,
 } from "../core/types.ts";
 
-type View = "input" | "training" | "eval" | "about" | "challenge" | "learn";
+type View = "input" | "training" | "eval" | "about" | "challenge" | "learn" | "keyboard";
 
 interface ChallengeState {
   phase: "train" | "test" | "done";
@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v12 · Feinschliff";
+const BUILD = "v13 · Tastatur-Taste";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -104,6 +104,7 @@ export class SilentTypeApp {
   private learn: { running: boolean; done: boolean; profile: MouthProfile | null } | null = null;
   private mouthProfile: MouthProfile | null = null;
   private guided = false; // the guided tour (Kennenlernen → Challenge)
+  private kb: { text: string; listening: boolean } | null = null;
   private detectorReady = false;
   private detectorSource = "";
   private lastResult: ClassificationResult | null = null;
@@ -245,7 +246,9 @@ export class SilentTypeApp {
     const nav = this.root.querySelector(".nav") as HTMLElement | null;
     if (nav)
       nav.style.display =
-        this.view === "challenge" || this.view === "learn" ? "none" : "inline-flex";
+        this.view === "challenge" || this.view === "learn" || this.view === "keyboard"
+          ? "none"
+          : "inline-flex";
     // nav active state
     this.root.querySelectorAll(".nav button").forEach((b) => {
       const btn = b as HTMLButtonElement;
@@ -255,6 +258,7 @@ export class SilentTypeApp {
     content.innerHTML = "";
     if (this.view === "challenge") content.appendChild(this.renderChallenge());
     else if (this.view === "learn") content.appendChild(this.renderLearn());
+    else if (this.view === "keyboard") content.appendChild(this.renderKeyboard());
     else if (this.view === "input") content.appendChild(this.renderInput());
     else if (this.view === "training") content.appendChild(this.renderTraining());
     else if (this.view === "eval") content.appendChild(this.renderEval());
@@ -815,6 +819,123 @@ export class SilentTypeApp {
     return wrap;
   }
 
+  // --------------------------------------------------------- keyboard demo ---
+  private startKeyboard() {
+    this.kb = { text: "", listening: false };
+    this.view = "keyboard";
+    this.renderView();
+  }
+
+  private endKeyboard() {
+    if (this.engine?.metrics.recording) this.engine.stopRecording();
+    this.kb = null;
+    this.view = "input";
+    this.renderView();
+  }
+
+  private async kbTap() {
+    const kb = this.kb;
+    if (!kb || kb.listening || !this.detectorReady) return;
+    if (!this.engine.metrics.cameraActive) {
+      try {
+        await this.engine.startCamera();
+      } catch {
+        this.toast("Kamera-Zugriff nötig – bitte erlauben.");
+        return;
+      }
+    }
+    const clf = await this.loadClassifier();
+    if (clf.size === 0) {
+      this.toast("Ich kenne dich noch nicht – mach kurz die Tour, dann versteh ich dich hier.");
+      return;
+    }
+    kb.listening = true;
+    this.engine.startRecording();
+    this.renderView();
+    await delay(2600);
+    if (!this.kb) return;
+    const res = this.engine.stopRecording();
+    kb.listening = false;
+    if (res.frames.length >= 3) {
+      const r = clf.predict(smooth(extractFeatures(res.frames)));
+      if (r.commandId) {
+        kb.text = (kb.text ? kb.text + " " : "") + commandLabel(r.commandId);
+        this.toast("✓ eingefügt");
+      } else {
+        this.toast("Nicht sicher verstanden – nochmal tippen & lautlos formen.");
+      }
+    } else {
+      this.toast("Kein Gesicht erkannt – näher ran / mehr Licht.");
+    }
+    this.renderView();
+  }
+
+  private renderKeyboard(): HTMLElement {
+    const kb = this.kb!;
+    const wrap = el("div", "stage-wrap");
+
+    const head = el("div", "chal-head");
+    const left = el("div");
+    left.innerHTML = `<b>So fühlt es sich an</b><div class="muted" style="font-size:12px">Die Auge-Lippe-Taste – wie in deiner Tastatur</div>`;
+    const right = el("div", "row");
+    const exit = el("button", "btn small ghost") as HTMLButtonElement;
+    exit.textContent = "Beenden";
+    exit.onclick = () => this.endKeyboard();
+    right.appendChild(exit);
+    head.appendChild(left);
+    head.appendChild(right);
+    wrap.appendChild(head);
+
+    const comp = el("div", "card kb-composer");
+    comp.innerHTML = `<div class="kb-label">Nachricht</div><div class="kb-text">${
+      kb.text
+        ? escapeHtml(kb.text)
+        : `<span class="kb-placeholder">Tippe die Taste unten und forme lautlos…</span>`
+    }</div>`;
+    wrap.appendChild(comp);
+
+    wrap.appendChild(
+      this.cameraStage(
+        `<div class="p-label">${kb.listening ? "👁️ Hört zu – jetzt lautlos formen" : "Bereit"}</div>`,
+      ),
+    );
+
+    const bar = el("div", "kb-bar");
+    const h1 = el("div", "kb-hint");
+    h1.textContent = kb.listening ? "Hört zu…" : "lautlos eingeben";
+    const key = el("button", "kb-key" + (kb.listening ? " listening" : "")) as HTMLButtonElement;
+    key.innerHTML = logoSvg();
+    key.title = "Lautlos eingeben";
+    key.onclick = () => this.kbTap();
+    const h2 = el("div", "kb-hint");
+    h2.style.textAlign = "right";
+    h2.textContent = this.mouthProfile ? "auf dich eingestellt ✓" : "";
+    bar.appendChild(h1);
+    bar.appendChild(key);
+    bar.appendChild(h2);
+    wrap.appendChild(bar);
+
+    if (kb.text) {
+      const row = el("div", "row");
+      row.style.justifyContent = "center";
+      const clr = el("button", "btn small secondary") as HTMLButtonElement;
+      clr.textContent = "Text löschen";
+      clr.onclick = () => {
+        if (this.kb) this.kb.text = "";
+        this.renderView();
+      };
+      row.appendChild(clr);
+      wrap.appendChild(row);
+    }
+
+    const tip = el("p", "muted");
+    tip.style.textAlign = "center";
+    tip.textContent =
+      "Stell dir vor, diese Taste sitzt in jeder Handytastatur – antippen, lautlos formen, fertig. (Erkannt wird, was du geübt hast.)";
+    wrap.appendChild(tip);
+    return wrap;
+  }
+
   private renderChallenge(): HTMLElement {
     const c = this.challenge!;
     const wrap = el("div", "stage-wrap");
@@ -1064,6 +1185,12 @@ export class SilentTypeApp {
     entryRow.appendChild(cta);
     entryRow.appendChild(learnBtn);
     wrap.appendChild(entryRow);
+
+    const kbBtn = el("button", "btn secondary") as HTMLButtonElement;
+    kbBtn.textContent = "⌨️ Wie in der Tastatur ausprobieren";
+    kbBtn.style.width = "100%";
+    kbBtn.onclick = () => this.startKeyboard();
+    wrap.appendChild(kbBtn);
 
     let prompterHtml: string;
     if (this.lastResult?.commandId) {
