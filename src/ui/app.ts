@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v11 · Logo & System-Look";
+const BUILD = "v12 · Feinschliff";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
