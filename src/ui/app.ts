@@ -56,7 +56,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v19 · Vision-Seite";
+const BUILD = "v20 · treffsicherer";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -68,11 +68,12 @@ function brandHtml(): string {
   return `<span class="brand-logo">${logoSvg()}</span><span class="brand-name">understand <span class="u">U</span></span>`;
 }
 
-// Curated for different lengths/shapes → easier to tell apart on a first try.
+// Curated to look clearly different on the lips (length + mouth shape) →
+// easier to tell apart on a first try: short / long+round-Ö / rounded-Ü.
 const CHALLENGE_COMMANDS = [
   "ich_bin_fertig",
   "oeffne_meinen_kalender",
-  "text_kopieren",
+  "mach_es_kuerzer",
 ];
 
 // "Kennenlernen" (calibration) mode.
@@ -474,7 +475,7 @@ export class SilentTypeApp {
     this.challenge = {
       phase: "train",
       commands: [...CHALLENGE_COMMANDS],
-      reps: 1, // each command once — nobody wants to repeat the same word
+      reps: 2, // 2 per command (interleaved so you never repeat back-to-back)
       trainCounts: {},
       testQueue: [],
       testIdx: 0,
@@ -623,7 +624,11 @@ export class SilentTypeApp {
 
   private challengeTrainCmd(): string | null {
     const c = this.challenge!;
-    for (const cmd of c.commands) {
+    const total = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
+    if (total >= c.commands.length * c.reps) return null;
+    // Round-robin so you never form the same command twice in a row.
+    for (let k = 0; k < c.commands.length; k++) {
+      const cmd = c.commands[(total + k) % c.commands.length];
       if ((c.trainCounts[cmd] ?? 0) < c.reps) return cmd;
     }
     return null;
@@ -813,6 +818,14 @@ export class SilentTypeApp {
       go.disabled = !this.detectorReady;
       go.onclick = () => this.runLearn();
       wrap.appendChild(go);
+      // In the guided tour this step is optional — let impatient users jump ahead.
+      if (this.guided) {
+        const skip = el("button", "btn ghost") as HTMLButtonElement;
+        skip.style.width = "100%";
+        skip.textContent = "Überspringen → direkt zur Challenge";
+        skip.onclick = () => this.startChallenge(); // keeps guided flag
+        wrap.appendChild(skip);
+      }
       return wrap;
     }
 
