@@ -41,6 +41,10 @@ interface ChallengeState {
   busy: boolean;
 }
 
+// Visible product branding (the URL/repo stays "silenttype").
+const APP_NAME = "understand U";
+const APP_TAGLINE = "versteht dich – ganz ohne Worte";
+
 // Curated for different lengths/shapes → easier to tell apart on a first try.
 const CHALLENGE_COMMANDS = [
   "ich_bin_fertig",
@@ -118,7 +122,8 @@ export class SilentTypeApp {
     const ov = el("div", "intro-overlay");
     const card = el("div", "intro-card");
     card.innerHTML = `
-      <h2>Willkommen bei SilentType</h2>
+      <h2>${APP_NAME}</h2>
+      <p class="muted" style="margin-top:0"><b style="color:var(--accent)">${APP_TAGLINE}.</b></p>
       <p class="muted">Sprich mit dem Computer, ohne hörbar zu sprechen – nur mit den Lippen. So geht's:</p>
       <ul class="intro-steps">
         <li><span class="num">1</span><span><b>Training:</b> Die App zeigt dir einen Befehl. Form ihn <b>lautlos</b> mit den Lippen. Mit „Hände frei“ startet & speichert sie von selbst – ein <b>grüner Haken ✓</b> zeigt, dass es gespeichert ist.</span></li>
@@ -146,7 +151,7 @@ export class SilentTypeApp {
     // Status bar
     const bar = el("div", "statusbar");
     bar.innerHTML = `
-      <span class="brand">SilentType</span>
+      <span class="brand">${APP_NAME}</span>
       <span class="dot" id="cam-dot" title="Kamera"></span>
       <span class="chip" id="mode-chip">Lautlos</span>
       <span class="preview" id="preview-text"></span>
@@ -1167,7 +1172,8 @@ export class SilentTypeApp {
     const card = el("div", "card");
     card.innerHTML = `
       <h2>Was ist das hier?</h2>
-      <p class="muted">SilentType ist ein <b>Forschungs-Prototyp</b>. Er testet, ob sich 20 fest
+      <p class="muted"><b style="color:var(--accent)">${APP_NAME} – ${APP_TAGLINE}.</b></p>
+      <p class="muted">${APP_NAME} ist ein <b>Forschungs-Prototyp</b>. Er testet, ob sich 20 fest
       vorgegebene deutsche Befehle allein an den Lippenbewegungen unterscheiden lassen – ohne Ton.</p>
       <h3>Wichtig & ehrlich</h3>
       <p class="muted">
