@@ -38,14 +38,16 @@ interface ChallengeState {
   results: boolean[]; // per test prompt: hit/miss
   lastUnderstood: string | null;
   lastCorrect: boolean | null;
-  busy: boolean;
+  running: boolean; // the guided auto-run is active
+  stage: "idle" | "cue" | "record" | "saved" | "reveal";
+  cueText: string;
 }
 
 // Visible product branding (the URL/repo stays "silenttype").
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v5 · Tap-Challenge";
+const BUILD = "v6 · Auto-Challenge";
 
 /** Styled wordmark with the "U" as a small accent mark. */
 function brandHtml(): string {
@@ -376,10 +378,6 @@ export class SilentTypeApp {
 
   /** Called by the engine when it auto-detects the end of an utterance. */
   private async handleAutoStop(res: RecordingResult) {
-    if (this.view === "challenge" && this.challenge) {
-      await this.challengeStop(res);
-      return;
-    }
     if (this.view === "training") {
       const current = this.order[this.orderIndex];
       if (current) await this.saveTrainingSample(current, res);
@@ -404,14 +402,131 @@ export class SilentTypeApp {
       results: [],
       lastUnderstood: null,
       lastCorrect: null,
-      busy: false,
+      running: false,
+      stage: "idle",
+      cueText: "",
     };
     this.sessionId = crypto.randomUUID();
     this.view = "challenge";
     this.renderView();
   }
 
+  private challengeAlive(c: ChallengeState): boolean {
+    return this.challenge === c && c.running;
+  }
+
+  /** One tap starts a guided auto-run through all reps and the rate round. */
+  private async runChallenge() {
+    const c = this.challenge;
+    if (!c || c.running) return;
+    if (!this.engine?.metrics.cameraActive) {
+      await this.toggleCamera();
+      return;
+    }
+    if (!this.detectorReady) return;
+    c.running = true;
+    this.renderView();
+
+    // --- Training: auto-cycle through every rep of every command ---
+    while (this.challengeAlive(c) && c.phase === "train") {
+      const cmd = this.challengeTrainCmd();
+      if (!cmd) {
+        c.testQueue = [...c.commands];
+        shuffle(c.testQueue);
+        c.phase = "test";
+        c.testIdx = 0;
+        break;
+      }
+      await this.challengeCountdown(c);
+      if (!this.challengeAlive(c)) break;
+      const res = await this.challengeRecordWindow(c, 2500);
+      if (!this.challengeAlive(c)) break;
+      if (res.frames.length >= 3) {
+        await this.saveChallengeRecording(cmd, res);
+        c.trainCounts[cmd] = (c.trainCounts[cmd] ?? 0) + 1;
+        c.stage = "saved";
+        this.renderView();
+        await delay(700);
+      } else {
+        this.toast("Kein Gesicht erkannt – näher an die Kamera / mehr Licht.");
+        await delay(500);
+      }
+    }
+
+    // --- Rate round: auto-cycle through the test prompts ---
+    while (this.challengeAlive(c) && c.phase === "test") {
+      if (c.testIdx >= c.testQueue.length) {
+        c.phase = "done";
+        break;
+      }
+      const target = c.testQueue[c.testIdx];
+      await this.challengeCountdown(c);
+      if (!this.challengeAlive(c)) break;
+      const res = await this.challengeRecordWindow(c, 2500);
+      if (!this.challengeAlive(c)) break;
+      let understood: string | null = null;
+      if (res.frames.length >= 3) {
+        const clf = await this.loadClassifier();
+        understood = clf.predict(smooth(extractFeatures(res.frames))).commandId;
+      }
+      const correct = understood === target;
+      c.lastUnderstood = understood;
+      c.lastCorrect = correct;
+      c.results.push(correct);
+      if (correct) c.score++;
+      c.testIdx++;
+      c.stage = "reveal";
+      this.renderView();
+      await delay(2000);
+      c.lastUnderstood = null;
+      c.lastCorrect = null;
+    }
+
+    if (this.challenge === c) {
+      const finished = c.phase === "done";
+      c.running = false;
+      c.stage = "idle";
+      c.cueText = "";
+      this.renderView();
+      if (finished) this.confettiBurst();
+    }
+  }
+
+  private async challengeCountdown(c: ChallengeState) {
+    c.stage = "cue";
+    const steps = ["Gleich…", "3", "2", "1"];
+    for (const s of steps) {
+      if (!this.challengeAlive(c)) return;
+      c.cueText = s;
+      this.renderView();
+      await delay(s === "Gleich…" ? 650 : 520);
+    }
+  }
+
+  private async challengeRecordWindow(
+    c: ChallengeState,
+    ms: number,
+  ): Promise<RecordingResult> {
+    c.stage = "record";
+    c.cueText = "Jetzt lautlos formen!";
+    this.engine.startRecording();
+    this.renderView();
+    await delay(ms);
+    return this.engine.stopRecording();
+  }
+
+  private stopChallengeRun() {
+    if (this.challenge) {
+      this.challenge.running = false;
+      this.challenge.stage = "idle";
+      this.challenge.cueText = "";
+      if (this.engine.metrics.recording) this.engine.stopRecording();
+      this.renderView();
+    }
+  }
+
   private endChallenge() {
+    if (this.engine?.metrics.recording) this.engine.stopRecording();
     this.challenge = null;
     this.view = "input";
     this.renderView();
@@ -441,83 +556,6 @@ export class SilentTypeApp {
     };
     await saveRecording(rec);
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
-  }
-
-  /** Reliable tap-to-record: tap → record a fixed ~2.5 s window → save → advance. */
-  private async challengeRecordTap() {
-    const c = this.challenge;
-    if (!c || c.busy || !this.engine?.metrics.cameraActive || !this.detectorReady) return;
-    c.busy = true;
-    this.engine.startRecording();
-    this.renderView();
-    await delay(2600);
-    const res = this.engine.stopRecording();
-    await this.processChallengeRec(res);
-  }
-
-  /** Hands-free path (optional fallback). */
-  private async challengeStop(res: RecordingResult) {
-    const c = this.challenge;
-    if (!c || c.busy) return;
-    c.busy = true;
-    this.renderView();
-    await this.processChallengeRec(res);
-  }
-
-  private async processChallengeRec(res: RecordingResult) {
-    const c = this.challenge;
-    if (!c) return;
-    // Very tolerant: only reject when essentially no face was seen at all.
-    if (res.frames.length < 3) {
-      this.toast("Kein Gesicht erkannt – näher an die Kamera / mehr Licht, dann nochmal tippen.");
-      c.busy = false;
-      this.renderView();
-      return;
-    }
-
-    if (c.phase === "train") {
-      const cmd = this.challengeTrainCmd();
-      if (cmd) {
-        await this.saveChallengeRecording(cmd, res);
-        c.trainCounts[cmd] = (c.trainCounts[cmd] ?? 0) + 1;
-        const done = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
-        this.toast(`✓ Gespeichert (${done} / ${c.commands.length * c.reps})`);
-        if (!this.challengeTrainCmd()) {
-          c.testQueue = [...c.commands];
-          shuffle(c.testQueue);
-          c.phase = "test";
-          c.testIdx = 0;
-        }
-      }
-      c.busy = false;
-      this.renderView();
-    } else if (c.phase === "test") {
-      const target = c.testQueue[c.testIdx];
-      const clf = await this.loadClassifier();
-      const r = clf.predict(smooth(extractFeatures(res.frames)));
-      const correct = r.commandId === target;
-      c.lastUnderstood = r.commandId;
-      c.lastCorrect = correct;
-      c.results.push(correct);
-      if (correct) c.score++;
-      c.testIdx++;
-      this.renderView(); // show the reveal
-      window.setTimeout(() => {
-        const cc = this.challenge;
-        if (!cc) return;
-        if (cc.testIdx >= cc.testQueue.length) {
-          cc.phase = "done";
-          cc.busy = false;
-          this.renderView();
-          this.confettiBurst();
-        } else {
-          cc.lastUnderstood = null;
-          cc.lastCorrect = null;
-          cc.busy = false;
-          this.renderView();
-        }
-      }, 1900);
-    }
   }
 
   private renderChallenge(): HTMLElement {
@@ -589,29 +627,45 @@ export class SilentTypeApp {
     head.appendChild(right);
     wrap.appendChild(head);
 
-    // Prompter content.
+    const camActive = this.engine?.metrics.cameraActive ?? false;
+    const trainCmd = c.phase === "train" ? this.challengeTrainCmd() : null;
+    const target = c.phase === "test" ? c.testQueue[c.testIdx] : null;
+    const label =
+      c.phase === "train"
+        ? trainCmd
+          ? commandLabel(trainCmd)
+          : ""
+        : target
+          ? commandLabel(target)
+          : "";
+
+    // Prompter content, driven by the guided auto-run stage.
     let prompterHtml: string;
-    if (c.phase === "train") {
-      const cmd = this.challengeTrainCmd();
-      const trained = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
-      const total = c.commands.length * c.reps;
-      prompterHtml = `<div class="p-label">Übe · lautlos formen</div>
-        <div class="p-big">${escapeHtml(cmd ? commandLabel(cmd) : "")}</div>
-        <div class="p-sub">${trained} / ${total} geübt</div>`;
+    if (c.stage === "saved") {
+      prompterHtml = `<div class="p-label reveal-correct">Gespeichert ✓</div>
+        <div class="p-big ok">${escapeHtml(label)}</div>`;
+    } else if (c.phase === "test" && c.lastCorrect === true) {
+      prompterHtml = `<div class="p-label reveal-correct">Richtig erkannt! ✓</div>
+        <div class="p-big ok">${escapeHtml(commandLabel(c.lastUnderstood!))}</div>`;
+    } else if (c.phase === "test" && c.lastCorrect === false) {
+      prompterHtml = `<div class="p-label reveal-wrong">Knapp daneben</div>
+        <div class="p-big">${escapeHtml(label)}</div>
+        <div class="p-sub">Ich dachte: ${escapeHtml(c.lastUnderstood ? commandLabel(c.lastUnderstood) : "— nichts —")}</div>`;
+    } else if (c.stage === "record") {
+      prompterHtml = `<div class="p-label" style="color:#ff6b61">● ${escapeHtml(c.cueText)}</div>
+        <div class="p-big">${escapeHtml(label)}</div>`;
+    } else if (c.stage === "cue") {
+      prompterHtml = `<div class="p-label">${c.phase === "train" ? "Gleich lautlos formen" : "Rate-Runde · gleich formen"}</div>
+        <div class="p-big">${escapeHtml(label)}</div>
+        <div class="p-sub" style="font-size:22px;font-weight:700;color:#fff">${escapeHtml(c.cueText)}</div>`;
     } else {
-      const target = c.testQueue[c.testIdx];
-      if (c.lastCorrect === true) {
-        prompterHtml = `<div class="p-label reveal-correct">Richtig erkannt! ✓</div>
-          <div class="p-big ok">${escapeHtml(commandLabel(c.lastUnderstood!))}</div>`;
-      } else if (c.lastCorrect === false) {
-        prompterHtml = `<div class="p-label reveal-wrong">Knapp daneben</div>
-          <div class="p-big">${escapeHtml(commandLabel(target))}</div>
-          <div class="p-sub">Ich dachte: ${escapeHtml(c.lastUnderstood ? commandLabel(c.lastUnderstood) : "— nichts —")}</div>`;
-      } else {
-        prompterHtml = `<div class="p-label">Form jetzt lautlos</div>
-          <div class="p-big">${escapeHtml(commandLabel(target))}</div>
-          <div class="p-sub">Mal sehen, ob ich dich erkenne…</div>`;
-      }
+      prompterHtml = `<div class="p-label">${c.phase === "train" ? "Üben" : "Rate-Runde"}</div>
+        <div class="p-big">${escapeHtml(label)}</div>
+        <div class="p-sub">${
+          !camActive
+            ? "Kamera einschalten, dann „Los geht's“"
+            : "Einmal „Los geht's“ – läuft dann automatisch durch"
+        }</div>`;
     }
     wrap.appendChild(this.cameraStage(prompterHtml));
 
@@ -625,32 +679,28 @@ export class SilentTypeApp {
       wrap.appendChild(dots);
     }
 
-    // Dock with the big TAP-to-record button (reliable: tap → ~2.5 s → saved).
-    const camActive = this.engine?.metrics.cameraActive ?? false;
-    const dock = el("div", "dock");
-    const dleft = el("div", "dock-side left");
-    dleft.textContent = !camActive
-      ? "Kamera aus"
-      : c.busy
-        ? "Aufnahme…"
-        : "Tippen & formen";
-    const recBtn = this.recordButton(
-      () => this.challengeRecordTap(),
-      camActive && this.detectorReady && !c.busy,
-    );
-    const dright = el("div", "dock-side right");
-    dock.appendChild(dleft);
-    dock.appendChild(recBtn);
-    dock.appendChild(dright);
-    wrap.appendChild(dock);
+    // One button: start the guided run, or stop it.
+    const mainBtn = el("button", "btn big") as HTMLButtonElement;
+    mainBtn.style.width = "100%";
+    if (c.running) {
+      mainBtn.className = "btn big secondary";
+      mainBtn.textContent = "⏸ Stopp";
+      mainBtn.onclick = () => this.stopChallengeRun();
+    } else if (!camActive) {
+      mainBtn.textContent = "Kamera einschalten";
+      mainBtn.onclick = () => this.toggleCamera();
+    } else {
+      mainBtn.textContent = "Los geht's ▶";
+      mainBtn.disabled = !this.detectorReady;
+      mainBtn.onclick = () => this.runChallenge();
+    }
+    wrap.appendChild(mainBtn);
 
     const tip = el("p", "muted");
     tip.style.textAlign = "center";
-    tip.textContent = !camActive
-      ? "Kamera einschalten, dann geht's los."
-      : c.busy
-        ? "Forme den Befehl jetzt lautlos – wird gleich gespeichert…"
-        : "Großen Knopf tippen, Befehl lautlos formen – nach ~2,5 s ist er gespeichert.";
+    tip.textContent = c.running
+      ? "Folge den Ansagen – forme jeden Befehl lautlos, sobald „Jetzt!“ erscheint. (Stopp jederzeit möglich.)"
+      : "Einmal starten – die App führt dich automatisch durch alle Aufnahmen, ganz ohne mehrfaches Tippen.";
     wrap.appendChild(tip);
     return wrap;
   }
