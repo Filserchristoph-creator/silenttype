@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v15 · Datenschutz & Impressum";
+const BUILD = "v16 · aufgeräumt für Tester";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -99,6 +99,7 @@ export class SilentTypeApp {
   private view: View = "input";
   private mode: InputMode = "silent";
   private autoMode = (localStorage.getItem("st_auto") ?? "1") === "1";
+  private devMode = (localStorage.getItem("st_dev") ?? "0") === "1";
   private flashSaved: string | null = null;
   private challenge: ChallengeState | null = null;
   private learn: { running: boolean; done: boolean; profile: MouthProfile | null } | null = null;
@@ -365,11 +366,15 @@ export class SilentTypeApp {
     rec.innerHTML = `🔴 <span id="m-recsec">0.0</span>s · <span id="m-recframes">0</span> Punkte`;
     stage.appendChild(rec);
 
-    const meters = el("div", "meters");
-    meters.innerHTML = `
-      <div class="meter-row"><span>Mund auf</span><div class="bar"><span id="m-open-bar"></span></div><span class="mv" id="m-open-v">–</span></div>
-      <div class="meter-row"><span>Mund breit</span><div class="bar"><span class="ok" id="m-width-bar"></span></div><span class="mv" id="m-width-v">–</span></div>`;
-    stage.appendChild(meters);
+    // Technical live meters only in Profi-Ansicht; recognition uses them in the
+    // background either way.
+    if (this.devMode) {
+      const meters = el("div", "meters");
+      meters.innerHTML = `
+        <div class="meter-row"><span>Mund auf</span><div class="bar"><span id="m-open-bar"></span></div><span class="mv" id="m-open-v">–</span></div>
+        <div class="meter-row"><span>Mund breit</span><div class="bar"><span class="ok" id="m-width-bar"></span></div><span class="mv" id="m-width-v">–</span></div>`;
+      stage.appendChild(meters);
+    }
 
     if (!this.engine?.metrics.cameraActive) {
       const off = el("div", "cam-off");
@@ -1260,14 +1265,30 @@ export class SilentTypeApp {
     dock.appendChild(right);
     wrap.appendChild(dock);
 
-    if (this.lastResult) wrap.appendChild(this.resultDetails(this.lastResult));
+    if (this.lastResult) {
+      if (this.devMode) {
+        // Full technical breakdown (candidates, distances, clipboard).
+        wrap.appendChild(this.resultDetails(this.lastResult));
+      } else if (this.lastResult.commandId) {
+        // Tester view: result shown big in the camera; just a simple "Nochmal".
+        const again = el("button", "btn secondary") as HTMLButtonElement;
+        again.textContent = "Nochmal";
+        again.style.width = "100%";
+        again.onclick = () => {
+          this.lastResult = null;
+          this.lastPreviewText = "";
+          this.renderView();
+        };
+        wrap.appendChild(again);
+      }
+    }
 
     const hint = el("p", "muted");
     hint.style.textAlign = "center";
     hint.textContent =
-      "Tipp: Die Erkennung braucht zuerst Trainingsdaten – nimm im Tab „Training“ einige Befehle auf.";
+      "Tipp: Mach einmal die „Geführte Tour“ oben – danach versteht dich die App hier.";
     wrap.appendChild(hint);
-    wrap.appendChild(this.detailsPanel());
+    if (this.devMode) wrap.appendChild(this.detailsPanel());
 
     const footer = el("p", "muted");
     footer.style.cssText = "text-align:center;font-size:12px;margin-top:4px";
@@ -1466,7 +1487,7 @@ export class SilentTypeApp {
     wrap.appendChild(this.commandChecklist(current));
     wrap.appendChild(this.sessionPanel());
     wrap.appendChild(this.dataCard());
-    wrap.appendChild(this.detailsPanel());
+    if (this.devMode) wrap.appendChild(this.detailsPanel());
     return wrap;
   }
 
@@ -1702,8 +1723,26 @@ export class SilentTypeApp {
     `;
     const howBtn = el("button", "btn secondary") as HTMLButtonElement;
     howBtn.textContent = "So geht's (Anleitung zeigen)";
+    howBtn.style.width = "100%";
     howBtn.onclick = () => this.showIntro();
     card.appendChild(howBtn);
+
+    // Profi-Ansicht: shows the technical live meters, candidate distances and
+    // details. Off by default so testers see a clean app.
+    const dev = el("label", "auto-toggle");
+    dev.style.cssText = "margin-top:12px;width:100%;justify-content:space-between";
+    const dtext = el("span");
+    dtext.textContent = "🔧 Profi-Ansicht (Technik anzeigen)";
+    const dsw = el("span", "switch" + (this.devMode ? " on" : ""));
+    dev.appendChild(dtext);
+    dev.appendChild(dsw);
+    dev.onclick = () => {
+      this.devMode = !this.devMode;
+      localStorage.setItem("st_dev", this.devMode ? "1" : "0");
+      this.renderView();
+    };
+    card.appendChild(dev);
+
     const ver = el("p", "muted");
     ver.style.margin = "12px 0 0";
     ver.textContent = `Version: ${BUILD}`;
