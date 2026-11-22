@@ -9,6 +9,7 @@ import {
   macroF1,
   type LabelledItem,
 } from "../src/core/evaluation.ts";
+import { extractFeatures, featureDim } from "../src/core/features.ts";
 
 /**
  * End-to-end check on SYNTHETIC data.
@@ -101,6 +102,21 @@ function buildDataset(): Recording[] {
   }
   return recs;
 }
+
+describe("feature pipeline", () => {
+  it("resamples to a fixed length and adds velocity features", () => {
+    const rec = makeRecording(0, "s1", 123);
+    const seq = extractFeatures(rec.frames);
+    expect(seq.frames.length).toBe(28); // fixed length regardless of input
+    expect(seq.dim).toBe(featureDim() * 2); // geometry + velocity
+    expect(seq.frames[0].length).toBe(seq.dim);
+  });
+
+  it("returns an empty sequence for no usable frames", () => {
+    const seq = extractFeatures([]);
+    expect(seq.frames.length).toBe(0);
+  });
+});
 
 describe("pipeline on synthetic separable data", () => {
   it("learns to classify well above the random baseline", () => {

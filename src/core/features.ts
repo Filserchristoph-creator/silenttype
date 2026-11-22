@@ -88,18 +88,106 @@ function polygonArea(poly: [number, number][]): number {
   return Math.abs(a) / 2;
 }
 
+/** All feature sequences are resampled to this many frames. */
+const TARGET_LEN = 28;
+
+/** Moving-average smoothing over a list of vectors. */
+function smoothVectors(seq: number[][], window = 3): number[][] {
+  if (window <= 1 || seq.length === 0) return seq;
+  const half = Math.floor(window / 2);
+  const dim = seq[0].length;
+  const out: number[][] = [];
+  for (let i = 0; i < seq.length; i++) {
+    const acc = new Array(dim).fill(0);
+    let count = 0;
+    for (let j = i - half; j <= i + half; j++) {
+      if (j < 0 || j >= seq.length) continue;
+      for (let d = 0; d < dim; d++) acc[d] += seq[j][d];
+      count++;
+    }
+    out.push(acc.map((v) => v / count));
+  }
+  return out;
+}
+
+/** Per-frame motion = L2 distance from the previous frame. */
+function frameMotion(seq: number[][]): number[] {
+  const motion = [0];
+  for (let i = 1; i < seq.length; i++) {
+    let s = 0;
+    for (let d = 0; d < seq[i].length; d++) {
+      const x = seq[i][d] - seq[i - 1][d];
+      s += x * x;
+    }
+    motion.push(Math.sqrt(s));
+  }
+  return motion;
+}
+
+/** Trim still frames before/after the actual mouth movement (endpoint detection). */
+function trimStatic(seq: number[][]): number[][] {
+  if (seq.length < 6) return seq;
+  const motion = frameMotion(seq);
+  const maxM = Math.max(...motion);
+  if (maxM <= 1e-6) return seq;
+  const thr = maxM * 0.18;
+  let start = 0;
+  let end = seq.length - 1;
+  while (start < end && motion[start] < thr) start++;
+  while (end > start && motion[end] < thr) end--;
+  start = Math.max(0, start - 2);
+  end = Math.min(seq.length - 1, end + 2);
+  const trimmed = seq.slice(start, end + 1);
+  return trimmed.length >= 4 ? trimmed : seq;
+}
+
+/** Resample a sequence to a fixed number of frames via linear interpolation. */
+function resample(seq: number[][], n: number): number[][] {
+  if (seq.length <= 1 || seq.length === n) return seq;
+  const dim = seq[0].length;
+  const out: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / (n - 1)) * (seq.length - 1);
+    const lo = Math.floor(t);
+    const hi = Math.min(seq.length - 1, lo + 1);
+    const frac = t - lo;
+    const v = new Array(dim);
+    for (let d = 0; d < dim; d++) v[d] = seq[lo][d] * (1 - frac) + seq[hi][d] * frac;
+    out.push(v);
+  }
+  return out;
+}
+
+/** Append per-frame velocity (delta) features — captures HOW the lips move. */
+function appendVelocity(seq: number[][]): number[][] {
+  if (seq.length === 0) return seq;
+  const dim = seq[0].length;
+  return seq.map((v, i) => {
+    const prev = seq[Math.max(0, i - 1)];
+    const vel = new Array(dim);
+    for (let d = 0; d < dim; d++) vel[d] = (v[d] - prev[d]) * 2;
+    return v.concat(vel);
+  });
+}
+
 /**
- * Convert a full recording's frames into a FeatureSequence.
- * Low-quality frames (quality below `minQuality`) are dropped; if too many are
- * dropped the sequence may be short, which the caller should treat as low value.
+ * Convert a recording's frames into a FeatureSequence.
+ * Pipeline: per-frame geometry → drop still endpoints → smooth → resample to a
+ * fixed length → append velocity (movement dynamics). This makes two recordings
+ * of the same command look much more alike regardless of speed or idle time.
  */
 export function extractFeatures(
   frames: LandmarkFrame[],
   minQuality = 0.3,
 ): FeatureSequence {
   const usable = frames.filter((f) => f.quality >= minQuality);
-  const out = usable.map(frameFeatures);
-  return { frames: out, dim: featureDim() };
+  let base = usable.map(frameFeatures);
+  if (base.length === 0) return { frames: [], dim: featureDim() * 2 };
+  base = trimStatic(base);
+  base = smoothVectors(base, 3);
+  base = resample(base, TARGET_LEN);
+  const withVel = appendVelocity(base);
+  return { frames: withVel, dim: withVel[0].length };
 }
 
 /**

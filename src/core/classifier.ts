@@ -50,11 +50,52 @@ export const DEFAULT_CONFIG: ClassifierConfig = {
 
 export class DtwKnnClassifier {
   private refs: LabelledSeq[] = [];
+  private mean: number[] | null = null;
+  private std: number[] | null = null;
   constructor(public config: ClassifierConfig = DEFAULT_CONFIG) {}
 
-  /** Replace the training set. */
+  /** Replace the training set and standardize features (per-dimension z-score). */
   fit(samples: LabelledSeq[]) {
-    this.refs = samples.filter((s) => s.seq.frames.length > 0);
+    const raw = samples.filter((s) => s.seq.frames.length > 0);
+    this.computeStats(raw);
+    this.refs = raw.map((r) => ({
+      commandId: r.commandId,
+      seq: { frames: r.seq.frames.map((f) => this.standardize(f)), dim: r.seq.dim },
+    }));
+  }
+
+  private computeStats(refs: LabelledSeq[]) {
+    const dim = refs[0]?.seq.frames[0]?.length ?? 0;
+    if (!dim) {
+      this.mean = this.std = null;
+      return;
+    }
+    const mean = new Array(dim).fill(0);
+    let count = 0;
+    for (const r of refs)
+      for (const f of r.seq.frames) {
+        for (let d = 0; d < dim; d++) mean[d] += f[d];
+        count++;
+      }
+    const n = Math.max(1, count);
+    for (let d = 0; d < dim; d++) mean[d] /= n;
+    const std = new Array(dim).fill(0);
+    for (const r of refs)
+      for (const f of r.seq.frames)
+        for (let d = 0; d < dim; d++) {
+          const x = f[d] - mean[d];
+          std[d] += x * x;
+        }
+    for (let d = 0; d < dim; d++) std[d] = Math.sqrt(std[d] / n) || 1;
+    this.mean = mean;
+    this.std = std;
+  }
+
+  private standardize(f: number[]): number[] {
+    if (!this.mean || !this.std) return f;
+    const out = new Array(f.length);
+    for (let d = 0; d < f.length; d++) out[d] = (f[d] - this.mean[d]) / this.std[d];
+    return out;
   }
 
   get size(): number {
@@ -78,10 +119,11 @@ export class DtwKnnClassifier {
       };
     }
 
-    // Distance to every reference.
+    // Standardize the query with the training stats, then distance to every ref.
+    const qFrames = query.frames.map((f) => this.standardize(f));
     const dists = this.refs.map((r) => ({
       commandId: r.commandId,
-      distance: dtwDistance(query.frames, r.seq.frames, {
+      distance: dtwDistance(qFrames, r.seq.frames, {
         bandFraction: this.config.bandFraction,
       }),
     }));

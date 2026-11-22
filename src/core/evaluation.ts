@@ -5,7 +5,7 @@ import type {
   Recording,
 } from "./types.ts";
 import { DtwKnnClassifier, type ClassifierConfig, DEFAULT_CONFIG } from "./classifier.ts";
-import { extractFeatures, smooth } from "./features.ts";
+import { extractFeatures } from "./features.ts";
 
 /**
  * Honest, reproducible evaluation.
@@ -127,7 +127,7 @@ export interface PreparedSample {
 /** Extract + smooth features for a list of recordings. */
 export function prepare(recordings: Recording[]): PreparedSample[] {
   return recordings
-    .map((r) => ({ recording: r, seq: smooth(extractFeatures(r.frames)) }))
+    .map((r) => ({ recording: r, seq: extractFeatures(r.frames) }))
     .filter((s) => s.seq.frames.length > 0);
 }
 

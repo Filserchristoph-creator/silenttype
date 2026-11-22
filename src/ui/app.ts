@@ -1,6 +1,6 @@
 import { CaptureEngine, type LiveMetrics, type RecordingResult } from "./engine.ts";
 import { COMMANDS, commandLabel } from "../core/commands.ts";
-import { extractFeatures, smooth, frameFeatures } from "../core/features.ts";
+import { extractFeatures, frameFeatures } from "../core/features.ts";
 import { DtwKnnClassifier } from "../core/classifier.ts";
 import {
   getAllRecordings,
@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v13 · Tastatur-Taste";
+const BUILD = "v14 · bessere Erkennung";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -525,7 +525,7 @@ export class SilentTypeApp {
       let understood: string | null = null;
       if (res.frames.length >= 3) {
         const clf = await this.loadClassifier();
-        understood = clf.predict(smooth(extractFeatures(res.frames))).commandId;
+        understood = clf.predict(extractFeatures(res.frames)).commandId;
       }
       const correct = understood === target;
       c.lastUnderstood = understood;
@@ -857,7 +857,7 @@ export class SilentTypeApp {
     const res = this.engine.stopRecording();
     kb.listening = false;
     if (res.frames.length >= 3) {
-      const r = clf.predict(smooth(extractFeatures(res.frames)));
+      const r = clf.predict(extractFeatures(res.frames));
       if (r.commandId) {
         kb.text = (kb.text ? kb.text + " " : "") + commandLabel(r.commandId);
         this.toast("✓ eingefügt");
@@ -1327,7 +1327,7 @@ export class SilentTypeApp {
       this.renderView();
       return;
     }
-    const seq = smooth(extractFeatures(result.frames));
+    const seq = extractFeatures(result.frames);
     const clf = await this.loadClassifier();
     if (clf.size === 0) {
       this.toast("Noch keine Trainingsdaten – bitte zuerst im Tab „Training“ aufnehmen.");
