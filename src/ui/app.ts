@@ -29,6 +29,7 @@ import type {
 type View =
   | "input"
   | "vision"
+  | "firstwow"
   | "training"
   | "eval"
   | "about"
@@ -56,7 +57,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v21 · Vision zuerst";
+const BUILD = "v22 · Vision + Sofort-Wow";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -153,15 +154,11 @@ export class SilentTypeApp {
       console.error("Detector init failed", e);
     }
     this.renderView();
-    this.maybeShowIntro();
+    // No auto-popup: the Vision page is the first impression; the how-to is
+    // reachable from Info and happens naturally once they start.
   }
 
-  private maybeShowIntro() {
-    if (localStorage.getItem("st_seen_intro") === "1") return;
-    this.showIntro();
-  }
-
-  /** First-run welcome: explains in 3 steps what to do. Reopenable from Info. */
+  /** How-it-works overlay, reachable from Info. */
   private showIntro() {
     const ov = el("div", "intro-overlay");
     const card = el("div", "intro-card");
@@ -266,7 +263,10 @@ export class SilentTypeApp {
     const nav = this.root.querySelector(".nav") as HTMLElement | null;
     if (nav)
       nav.style.display =
-        this.view === "challenge" || this.view === "learn" || this.view === "keyboard"
+        this.view === "challenge" ||
+        this.view === "learn" ||
+        this.view === "keyboard" ||
+        this.view === "firstwow"
           ? "none"
           : "inline-flex";
     // nav active state + hide power tabs for testers (only in Profi-Ansicht).
@@ -280,6 +280,7 @@ export class SilentTypeApp {
     const content = this.root.querySelector("#content") as HTMLElement;
     content.innerHTML = "";
     if (this.view === "challenge") content.appendChild(this.renderChallenge());
+    else if (this.view === "firstwow") content.appendChild(this.renderFirstWow());
     else if (this.view === "learn") content.appendChild(this.renderLearn());
     else if (this.view === "keyboard") content.appendChild(this.renderKeyboard());
     else if (this.view === "vision") content.appendChild(this.renderVision());
@@ -652,11 +653,55 @@ export class SilentTypeApp {
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
   }
 
-  // ------------------------------------------------------- Kennenlernen ------
-  /** The guided tour: Kennenlernen first, then automatically the Challenge. */
-  private startJourney() {
+  // ------------------------------------------------------- first wow ---------
+  /** The journey now opens with an instant live-tracking "wow", then the challenge. */
+  private async startJourney() {
     this.guided = true;
-    this.startLearn();
+    this.view = "firstwow";
+    this.renderView();
+    // The tap is a user gesture → we may start the camera right away.
+    if (this.detectorReady && !this.engine.metrics.cameraActive) {
+      try {
+        await this.engine.startCamera();
+        this.renderView();
+      } catch {
+        /* firstwow shows the "Kamera einschalten" overlay */
+      }
+    }
+  }
+
+  private renderFirstWow(): HTMLElement {
+    const wrap = el("div", "stage-wrap");
+    const camActive = this.engine?.metrics.cameraActive ?? false;
+    const prompter = camActive
+      ? `<div class="p-label" style="color:#46d98a">👀 Ich sehe deine Lippen – in Echtzeit</div>
+         <div class="p-sub">Beweg ruhig den Mund – die Punkte folgen dir.</div>`
+      : `<div class="p-label">Kurzer Moment…</div>
+         <div class="p-sub">Erlaube die Kamera, dann siehst du es sofort.</div>`;
+    wrap.appendChild(this.cameraStage(prompter));
+
+    const go = el("button", "btn big") as HTMLButtonElement;
+    go.style.width = "100%";
+    go.textContent = "Weiter – versteht es mich? ▶";
+    go.disabled = !this.detectorReady;
+    go.onclick = () => this.startChallenge(); // keeps the guided flag
+    wrap.appendChild(go);
+
+    const priv = el("p", "muted");
+    priv.style.cssText = "text-align:center;font-size:12px";
+    priv.textContent = "Kein Video, kein Ton – nur Lippen-Messpunkte, lokal auf deinem Gerät.";
+    wrap.appendChild(priv);
+
+    const back = el("button", "btn ghost small") as HTMLButtonElement;
+    back.style.cssText = "display:block;margin:0 auto";
+    back.textContent = "Zurück zur Vision";
+    back.onclick = () => {
+      this.guided = false;
+      if (this.engine.metrics.cameraActive) this.engine.stopCamera();
+      this.switchView("vision");
+    };
+    wrap.appendChild(back);
+    return wrap;
   }
 
   private startLearn() {
@@ -916,7 +961,7 @@ export class SilentTypeApp {
 
     const head = el("div", "chal-head");
     const left = el("div");
-    left.innerHTML = `<b>So fühlt es sich an</b><div class="muted" style="font-size:12px">Die Auge-Lippe-Taste – wie in deiner Tastatur</div>`;
+    left.innerHTML = `<b>Nachricht schreiben</b><div class="muted" style="font-size:12px">Lautlos – wie mit der Taste in deiner Tastatur</div>`;
     const right = el("div", "row");
     const exit = el("button", "btn small ghost") as HTMLButtonElement;
     exit.textContent = "Beenden";
@@ -927,10 +972,10 @@ export class SilentTypeApp {
     wrap.appendChild(head);
 
     const comp = el("div", "card kb-composer");
-    comp.innerHTML = `<div class="kb-label">Nachricht</div><div class="kb-text">${
+    comp.innerHTML = `<div class="kb-label">An die Familie</div><div class="kb-text">${
       kb.text
         ? escapeHtml(kb.text)
-        : `<span class="kb-placeholder">Tippe die Taste unten und forme lautlos…</span>`
+        : `<span class="kb-placeholder">Tippe die Taste 👁️ und forme lautlos – deine Nachricht erscheint hier.</span>`
     }</div>`;
     wrap.appendChild(comp);
 
@@ -1027,7 +1072,7 @@ export class SilentTypeApp {
     const head = el("div", "chal-head");
     const left = el("div");
     {
-      const prefix = this.guided ? "Schritt 2 von 2 · " : "";
+      const prefix = "";
       const title = c.phase === "train" ? "Challenge" : "Rate-Runde";
       const sub =
         c.phase === "train"
@@ -1210,7 +1255,7 @@ export class SilentTypeApp {
 
     // Prominent guided tour, plus the two single steps for returning users.
     const tour = el("button", "btn big") as HTMLButtonElement;
-    tour.textContent = "✨ Geführte Tour starten (2 Min)";
+    tour.textContent = "✨ Probier's selbst (2 Min)";
     tour.style.width = "100%";
     tour.onclick = () => this.startJourney();
     wrap.appendChild(tour);
@@ -1800,7 +1845,7 @@ export class SilentTypeApp {
 
     const cta = el("button", "btn big") as HTMLButtonElement;
     cta.style.width = "100%";
-    cta.textContent = "Jetzt selbst erleben ▶";
+    cta.textContent = "Probier's selbst ▶";
     cta.onclick = () => this.startJourney();
     wrap.appendChild(cta);
 
