@@ -47,7 +47,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v6 · Auto-Challenge";
+const BUILD = "v7 · 1× pro Befehl";
 
 /** Styled wordmark with the "U" as a small accent mark. */
 function brandHtml(): string {
@@ -137,7 +137,7 @@ export class SilentTypeApp {
       <p class="muted">Sprich mit dem Computer, ohne hörbar zu sprechen – nur mit den Lippen. So geht's:</p>
       <ul class="intro-steps">
         <li><span class="num">1</span><span><b>Training:</b> Die App zeigt dir einen Befehl. Form ihn <b>lautlos</b> mit den Lippen. Mit „Hände frei“ startet & speichert sie von selbst – ein <b>grüner Haken ✓</b> zeigt, dass es gespeichert ist.</span></li>
-        <li><span class="num">2</span><span>Mach das <b>ein paar Mal pro Befehl</b> (Ziel 10×). Je mehr Beispiele, desto besser lernt die App – ganz automatisch, ohne Extra-Schritte.</span></li>
+        <li><span class="num">2</span><span>In der Challenge sprichst du <b>ein paar verschiedene Befehle je einmal</b> ein – die App lernt dabei automatisch. (Mehr Beispiele = noch genauer, aber kein Muss.)</span></li>
         <li><span class="num">3</span><span><b>Eingabe:</b> Form einen geübten Befehl – die App zeigt dir groß, <b>was sie verstanden hat</b>.</span></li>
       </ul>
       <p class="muted" style="font-size:12px">Alles bleibt lokal auf deinem Gerät. Kamera nur nach deinem Klick. Kein Video, kein Ton.</p>`;
@@ -394,7 +394,7 @@ export class SilentTypeApp {
     this.challenge = {
       phase: "train",
       commands: [...CHALLENGE_COMMANDS],
-      reps: 3,
+      reps: 1, // each command once — nobody wants to repeat the same word
       trainCounts: {},
       testQueue: [],
       testIdx: 0,
@@ -608,7 +608,7 @@ export class SilentTypeApp {
     const left = el("div");
     left.innerHTML =
       c.phase === "train"
-        ? `<b>Schnell-Challenge</b><div class="muted" style="font-size:12px">Schritt 1: kurz üben</div>`
+        ? `<b>Schnell-Challenge</b><div class="muted" style="font-size:12px">Schritt 1: ${c.commands.length} Befehle je einmal</div>`
         : `<b>Rate-Runde</b><div class="muted" style="font-size:12px">Schritt 2: Erkenne ich dich?</div>`;
     const right = el("div", "row");
     if (c.phase === "train") {
