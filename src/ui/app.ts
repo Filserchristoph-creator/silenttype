@@ -56,7 +56,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v20 · treffsicherer";
+const BUILD = "v21 · Vision zuerst";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -105,7 +105,7 @@ export class SilentTypeApp {
   private video!: HTMLVideoElement;
   private canvas!: HTMLCanvasElement;
 
-  private view: View = "input";
+  private view: View = "vision";
   private mode: InputMode = "silent";
   private autoMode = (localStorage.getItem("st_auto") ?? "1") === "1";
   private devMode = (localStorage.getItem("st_dev") ?? "0") === "1";
@@ -214,8 +214,8 @@ export class SilentTypeApp {
     const main = el("div", "main");
     const nav = el("div", "nav");
     for (const [key, label] of [
-      ["input", "Eingabe"],
       ["vision", "Vision"],
+      ["input", "Test"],
       ["training", "Training"],
       ["eval", "Auswertung"],
       ["about", "Info"],
