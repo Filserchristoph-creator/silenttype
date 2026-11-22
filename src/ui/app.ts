@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v14 · bessere Erkennung";
+const BUILD = "v15 · Datenschutz & Impressum";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -1268,6 +1268,15 @@ export class SilentTypeApp {
       "Tipp: Die Erkennung braucht zuerst Trainingsdaten – nimm im Tab „Training“ einige Befehle auf.";
     wrap.appendChild(hint);
     wrap.appendChild(this.detailsPanel());
+
+    const footer = el("p", "muted");
+    footer.style.cssText = "text-align:center;font-size:12px;margin-top:4px";
+    const legalLink = el("button", "btn ghost small") as HTMLButtonElement;
+    legalLink.textContent = "Datenschutz & Impressum";
+    legalLink.style.fontSize = "12px";
+    legalLink.onclick = () => this.switchView("about");
+    footer.appendChild(legalLink);
+    wrap.appendChild(footer);
     return wrap;
   }
 
@@ -1676,34 +1685,57 @@ export class SilentTypeApp {
 
   // ---------------------------------------------------------------- about ----
   private renderAbout(): HTMLElement {
-    const wrap = el("div");
+    const wrap = el("div", "stage-wrap");
     const card = el("div", "card");
     card.innerHTML = `
       <h2>Was ist das hier?</h2>
       <p class="muted"><b style="color:var(--accent)">${APP_NAME} – ${APP_TAGLINE}.</b></p>
-      <p class="muted">${APP_NAME} ist ein <b>Forschungs-Prototyp</b>. Er testet, ob sich 20 fest
-      vorgegebene deutsche Befehle allein an den Lippenbewegungen unterscheiden lassen – ohne Ton.</p>
+      <p class="muted">${APP_NAME} ist ein <b>Forschungs-Prototyp</b>: Er testet, ob man mit dem Computer
+      sprechen kann, ohne hörbar zu sprechen – nur durch Lippenbewegungen.</p>
       <h3>Wichtig & ehrlich</h3>
       <p class="muted">
-        • Das System erkennt <b>nur</b>, was du ihm vorher antrainiert hast. Ohne Training erkennt es nichts.<br/>
+        • Das System erkennt <b>nur</b>, was du ihm vorher beigebracht hast.<br/>
         • Es rät nicht einfach einen plausiblen Satz. Bei Unsicherheit zeigt es „Unsicher“ oder „Nicht erkannt“.<br/>
-        • Im lautlosen Modus wird das Mikrofon <b>nie</b> geöffnet.<br/>
-        • Alle Daten bleiben lokal auf diesem Gerät. Nichts wird hochgeladen.<br/>
-        • Der Sprachmodus ist im PoC <b>nicht implementiert</b> (bewusst, um den eigentlichen Test nicht zu verzögern).
+        • Es wird <b>nie</b> ein Mikrofon geöffnet.<br/>
+        • Beliebigen freien Text zu erkennen ist noch nicht möglich – das ist die große Forschungsfrage.
       </p>
-      <h3>Datenschutz</h3>
-      <p class="muted">Kamera standardmäßig aus, nur nach deinem Klick aktiv, Aktivität oben sichtbar.
-      Es werden ausschließlich Lippen-Messpunkte gespeichert, niemals ein Video.</p>
     `;
     const howBtn = el("button", "btn secondary") as HTMLButtonElement;
     howBtn.textContent = "So geht's (Anleitung zeigen)";
     howBtn.onclick = () => this.showIntro();
     card.appendChild(howBtn);
     const ver = el("p", "muted");
-    ver.style.marginBottom = "0";
+    ver.style.margin = "12px 0 0";
     ver.textContent = `Version: ${BUILD}`;
     card.appendChild(ver);
     wrap.appendChild(card);
+
+    const legal = el("div", "card");
+    legal.innerHTML = `
+      <h2>Datenschutz & Rechtliches</h2>
+      <p class="muted" style="font-size:12px">Hinweis: Dies ist keine Rechtsberatung.</p>
+
+      <h3>Datenschutz</h3>
+      <p class="muted">
+        • Die Kamera ist standardmäßig <b>aus</b> und startet nur nach deinem Klick; ihre Aktivität ist oben am Logo sichtbar.<br/>
+        • Verarbeitet werden ausschließlich <b>Lippen-Messpunkte</b> – <b>kein Video, kein Ton</b>, keine Gesichtserkennung zur Identifizierung.<br/>
+        • Alle Aufnahmen bleiben <b>lokal in deinem Browser</b> auf diesem Gerät. <b>Kein Upload, keine Telemetrie.</b><br/>
+        • Du kannst deine Daten jederzeit exportieren oder im Tab „Training“ unter „Deine Daten“ vollständig löschen.<br/>
+        • Einzige Ausnahme: Beim ersten Start wird das Erkennungs-Modell einmalig von Google geladen (dabei werden keine persönlichen Daten übertragen).
+      </p>
+      <p class="muted" style="font-size:12px">Lippen-/Gesichtsdaten können als biometrienah gelten (Art. 9 DSGVO). Diese App minimiert bewusst. Für einen produktiven Einsatz ist eine fachkundige Datenschutzprüfung nötig.</p>
+
+      <h3>Nutzung & Haftung</h3>
+      <p class="muted">${APP_NAME} ist ein <b>experimenteller Prototyp</b> zu Test-/Forschungszwecken. Nutzung auf eigenes Risiko, <b>ohne Gewähr</b> für Richtigkeit oder Verfügbarkeit. Die Erkennung kann falsch liegen. Nicht für sicherheitskritische oder medizinische Zwecke verwenden.</p>
+
+      <h3>Impressum</h3>
+      <p class="muted">Angaben gemäß § 5 DDG:<br/>
+        [Dein Name]<br/>
+        [Straße, PLZ Ort]<br/>
+        E-Mail: [deine E-Mail-Adresse]<br/>
+        <span style="font-size:12px">(Platzhalter – gib mir deine Angaben, dann trage ich sie ein.)</span>
+      </p>`;
+    wrap.appendChild(legal);
     return wrap;
   }
 
