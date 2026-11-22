@@ -336,6 +336,47 @@ table.report th, table.report td {
   font-weight: 650; font-size: 13px;
 }
 
+/* ---------- Gamified challenge ---------- */
+.chal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.score-pill {
+  font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: var(--surface); border: 1px solid var(--line);
+  padding: 7px 13px; border-radius: 999px;
+}
+.ring { position: relative; width: 56px; height: 56px; flex: none; }
+.ring svg { transform: rotate(-90deg); display: block; }
+.ring .ring-label {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.chal-dots { display: flex; gap: 6px; justify-content: center; margin-top: 4px; }
+.chal-dots .d { width: 9px; height: 9px; border-radius: 50%; background: var(--surface-2); }
+.chal-dots .d.hit { background: var(--ok); }
+.chal-dots .d.miss { background: var(--bad); }
+
+.celebrate { text-align: center; padding: 10px 0; }
+.celebrate .emoji { font-size: 54px; line-height: 1; }
+.celebrate .big-score {
+  font-size: 56px; font-weight: 800; letter-spacing: -0.03em; margin: 6px 0;
+}
+.celebrate .big-score small { font-size: 24px; color: var(--text-dim); font-weight: 650; }
+
+/* result reveal in the prompter */
+.reveal-correct { color: var(--ok); }
+.reveal-wrong { color: var(--bad); }
+
+/* confetti */
+.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 90; overflow: hidden; }
+.confetti i {
+  position: absolute; top: -14px; width: 9px; height: 15px; border-radius: 2px;
+  opacity: 0.95; animation: fall linear forwards;
+}
+@keyframes fall {
+  to { transform: translateY(110vh) rotate(760deg); opacity: 0.6; }
+}
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom));
@@ -362,10 +403,34 @@ details.panel[open] > summary::before { content: "▾ "; }
 
 /* ---------- Mobile ---------- */
 @media (max-width: 680px) {
-  .main { padding: 12px 12px calc(20px + env(safe-area-inset-bottom)); gap: 12px; }
-  .stage { aspect-ratio: 3 / 4; border-radius: 20px; }
-  .record-btn { width: 70px; height: 70px; }
-  .record-btn .inner { width: 54px; height: 54px; }
+  :root { --radius: 16px; }
+  .statusbar { padding: 8px 14px; padding-top: calc(8px + env(safe-area-inset-top)); }
+  .statusbar .brand { font-size: 15px; }
+  .main { padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); gap: 12px; }
+  /* Tabs fill the row evenly instead of crowding to one side. */
+  .nav { align-self: stretch; justify-content: space-between; gap: 2px; padding: 3px; }
+  .nav button { flex: 1; padding: 9px 4px; font-size: 12.5px; text-align: center; }
+  /* Camera becomes the immersive hero. */
+  .stage { aspect-ratio: auto; height: 56vh; border-radius: 18px; }
+  .prompter { padding: 18px 16px 34px; }
+  .prompter .p-big { font-size: 30px; }
+  .prompter .p-label { font-size: 11px; }
+  .meters { padding: 28px 14px 12px; gap: 6px; }
+  .meter-row { grid-template-columns: 62px 1fr 40px; font-size: 11px; }
+  .cam-off p { font-size: 13px; }
+  /* Thumb-friendly controls. */
+  .record-btn { width: 74px; height: 74px; }
+  .record-btn .inner { width: 56px; height: 56px; }
+  .dock { gap: 8px; }
+  .dock-side { font-size: 12px; }
+  .dock-side.right { gap: 6px; }
+  .btn.small { padding: 9px 11px; }
+  .auto-toggle { font-size: 13px; padding: 8px 14px; }
+  .checklist { grid-template-columns: 1fr 1fr; }
+  .chk-item { padding: 9px 10px; font-size: 12px; }
+}
+@media (max-width: 680px) and (orientation: landscape) {
+  .stage { height: 78vh; }
 }
 @media (min-width: 1000px) {
   .stage { aspect-ratio: 16 / 9; }

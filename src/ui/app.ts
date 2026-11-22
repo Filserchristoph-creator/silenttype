@@ -25,7 +25,28 @@ import type {
   RecognitionStatus,
 } from "../core/types.ts";
 
-type View = "input" | "training" | "eval" | "about";
+type View = "input" | "training" | "eval" | "about" | "challenge";
+
+interface ChallengeState {
+  phase: "train" | "test" | "done";
+  commands: string[]; // the commands in this challenge
+  reps: number; // training reps per command
+  trainCounts: Record<string, number>;
+  testQueue: string[];
+  testIdx: number;
+  score: number;
+  results: boolean[]; // per test prompt: hit/miss
+  lastUnderstood: string | null;
+  lastCorrect: boolean | null;
+  busy: boolean;
+}
+
+// Curated for different lengths/shapes → easier to tell apart on a first try.
+const CHALLENGE_COMMANDS = [
+  "ich_bin_fertig",
+  "oeffne_meinen_kalender",
+  "text_kopieren",
+];
 
 const TARGET_REPS = 10; // per command → 200 total for one speaker
 
@@ -46,6 +67,7 @@ export class SilentTypeApp {
   private mode: InputMode = "silent";
   private autoMode = (localStorage.getItem("st_auto") ?? "1") === "1";
   private flashSaved: string | null = null;
+  private challenge: ChallengeState | null = null;
   private detectorReady = false;
   private detectorSource = "";
   private lastResult: ClassificationResult | null = null;
@@ -105,13 +127,13 @@ export class SilentTypeApp {
       </ul>
       <p class="muted" style="font-size:12px">Alles bleibt lokal auf deinem Gerät. Kamera nur nach deinem Klick. Kein Video, kein Ton.</p>`;
     const btn = el("button", "btn big") as HTMLButtonElement;
-    btn.textContent = "Los geht's";
+    btn.textContent = "Challenge starten 🎯";
     btn.style.width = "100%";
     btn.style.marginTop = "8px";
     btn.onclick = () => {
       localStorage.setItem("st_seen_intro", "1");
       ov.remove();
-      this.switchView("training");
+      this.startChallenge();
     };
     card.appendChild(btn);
     ov.appendChild(card);
@@ -174,10 +196,15 @@ export class SilentTypeApp {
   }
 
   private renderView() {
-    // Hands-free is only armed in the camera views.
+    // Hands-free is armed in the camera views and always during a challenge.
     if (this.engine)
       this.engine.autoSegment =
-        this.autoMode && (this.view === "input" || this.view === "training");
+        this.view === "challenge"
+          ? !(this.challenge?.busy ?? false)
+          : this.autoMode && (this.view === "input" || this.view === "training");
+    // Hide the tab bar during the focused challenge.
+    const nav = this.root.querySelector(".nav") as HTMLElement | null;
+    if (nav) nav.style.display = this.view === "challenge" ? "none" : "inline-flex";
     // nav active state
     this.root.querySelectorAll(".nav button").forEach((b) => {
       const btn = b as HTMLButtonElement;
@@ -185,7 +212,8 @@ export class SilentTypeApp {
     });
     const content = this.root.querySelector("#content") as HTMLElement;
     content.innerHTML = "";
-    if (this.view === "input") content.appendChild(this.renderInput());
+    if (this.view === "challenge") content.appendChild(this.renderChallenge());
+    else if (this.view === "input") content.appendChild(this.renderInput());
     else if (this.view === "training") content.appendChild(this.renderTraining());
     else if (this.view === "eval") content.appendChild(this.renderEval());
     else content.appendChild(this.renderAbout());
@@ -333,6 +361,10 @@ export class SilentTypeApp {
 
   /** Called by the engine when it auto-detects the end of an utterance. */
   private async handleAutoStop(res: RecordingResult) {
+    if (this.view === "challenge" && this.challenge) {
+      await this.challengeStop(res);
+      return;
+    }
     if (this.view === "training") {
       const current = this.order[this.orderIndex];
       if (current) await this.saveTrainingSample(current, res);
@@ -342,6 +374,275 @@ export class SilentTypeApp {
     } else {
       this.renderView();
     }
+  }
+
+  // ------------------------------------------------------- challenge ---------
+  private startChallenge() {
+    this.challenge = {
+      phase: "train",
+      commands: [...CHALLENGE_COMMANDS],
+      reps: 3,
+      trainCounts: {},
+      testQueue: [],
+      testIdx: 0,
+      score: 0,
+      results: [],
+      lastUnderstood: null,
+      lastCorrect: null,
+      busy: false,
+    };
+    this.sessionId = crypto.randomUUID();
+    this.view = "challenge";
+    this.renderView();
+  }
+
+  private endChallenge() {
+    this.challenge = null;
+    this.view = "input";
+    this.renderView();
+  }
+
+  private challengeTrainCmd(): string | null {
+    const c = this.challenge!;
+    for (const cmd of c.commands) {
+      if ((c.trainCounts[cmd] ?? 0) < c.reps) return cmd;
+    }
+    return null;
+  }
+
+  private async saveChallengeRecording(commandId: string, res: RecordingResult) {
+    const rec: Recording = {
+      id: crypto.randomUUID(),
+      commandId,
+      speaker: this.speaker,
+      sessionId: this.sessionId,
+      device: this.device,
+      createdAt: new Date().toISOString(),
+      mode: "silent",
+      frames: res.frames,
+      quality: res.meanQuality,
+      durationMs: res.durationMs,
+      videoConsent: false,
+    };
+    await saveRecording(rec);
+    this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
+  }
+
+  private async challengeStop(res: RecordingResult) {
+    const c = this.challenge;
+    if (!c || c.busy) return;
+    if (res.frames.length < 5 || res.meanQuality < 0.3) {
+      this.toast("Zu kurz – bitte etwas deutlicher formen.");
+      this.renderView();
+      return;
+    }
+    c.busy = true;
+    this.renderView(); // disarm hands-free while we process
+
+    if (c.phase === "train") {
+      const cmd = this.challengeTrainCmd();
+      if (cmd) {
+        await this.saveChallengeRecording(cmd, res);
+        c.trainCounts[cmd] = (c.trainCounts[cmd] ?? 0) + 1;
+        this.toast("✓ Gespeichert");
+        if (!this.challengeTrainCmd()) {
+          c.testQueue = [...c.commands];
+          shuffle(c.testQueue);
+          c.phase = "test";
+          c.testIdx = 0;
+        }
+      }
+      c.busy = false;
+      this.renderView();
+    } else if (c.phase === "test") {
+      const target = c.testQueue[c.testIdx];
+      const clf = await this.loadClassifier();
+      const r = clf.predict(smooth(extractFeatures(res.frames)));
+      const correct = r.commandId === target;
+      c.lastUnderstood = r.commandId;
+      c.lastCorrect = correct;
+      c.results.push(correct);
+      if (correct) c.score++;
+      c.testIdx++;
+      this.renderView(); // show the reveal (busy stays true → hands-free off)
+      window.setTimeout(() => {
+        const cc = this.challenge;
+        if (!cc) return;
+        if (cc.testIdx >= cc.testQueue.length) {
+          cc.phase = "done";
+          cc.busy = false;
+          this.renderView();
+          this.confettiBurst();
+        } else {
+          cc.lastUnderstood = null;
+          cc.lastCorrect = null;
+          cc.busy = false;
+          this.renderView();
+        }
+      }, 1900);
+    }
+  }
+
+  private renderChallenge(): HTMLElement {
+    const c = this.challenge!;
+    const wrap = el("div", "stage-wrap");
+
+    // Done → celebration, no camera.
+    if (c.phase === "done") {
+      const total = c.testQueue.length;
+      const emoji = c.score === total ? "🏆" : c.score >= Math.ceil(total / 2) ? "🎉" : "💪";
+      const msg =
+        c.score === total
+          ? "Perfekt! Die App hat dich jedes Mal verstanden – lautlos, ohne Ton."
+          : c.score >= Math.ceil(total / 2)
+            ? "Stark! Das funktioniert schon richtig gut."
+            : "Guter Anfang! Mit ein paar mehr Beispielen wird's deutlich besser.";
+      const card = el("div", "card celebrate");
+      card.innerHTML = `<div class="emoji">${emoji}</div>
+        <div class="big-score">${c.score}<small> / ${total}</small></div>
+        <p class="muted" style="margin:0">richtig erkannt</p>
+        <p style="margin-top:12px">${msg}</p>`;
+      const dots = el("div", "chal-dots");
+      for (const hit of c.results) dots.appendChild(el("span", "d " + (hit ? "hit" : "miss")));
+      card.appendChild(dots);
+      wrap.appendChild(card);
+      const row = el("div", "row");
+      row.style.justifyContent = "center";
+      const again = el("button", "btn big") as HTMLButtonElement;
+      again.textContent = "Nochmal 🎯";
+      again.onclick = () => this.startChallenge();
+      const more = el("button", "btn secondary") as HTMLButtonElement;
+      more.textContent = "Mehr Befehle üben";
+      more.onclick = () => {
+        this.challenge = null;
+        this.view = "training";
+        this.renderView();
+      };
+      const fin = el("button", "btn ghost") as HTMLButtonElement;
+      fin.textContent = "Fertig";
+      fin.onclick = () => this.endChallenge();
+      row.appendChild(again);
+      row.appendChild(more);
+      row.appendChild(fin);
+      wrap.appendChild(row);
+      return wrap;
+    }
+
+    // Header: title · progress/score · exit.
+    const head = el("div", "chal-head");
+    const left = el("div");
+    left.innerHTML =
+      c.phase === "train"
+        ? `<b>Schnell-Challenge</b><div class="muted" style="font-size:12px">Schritt 1: kurz üben</div>`
+        : `<b>Rate-Runde</b><div class="muted" style="font-size:12px">Schritt 2: Erkenne ich dich?</div>`;
+    const right = el("div", "row");
+    if (c.phase === "train") {
+      const trained = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
+      right.appendChild(this.ring(trained, c.commands.length * c.reps));
+    } else {
+      const pill = el("span", "score-pill");
+      pill.textContent = `Treffer ${c.score}/${c.testQueue.length}`;
+      right.appendChild(pill);
+    }
+    const exit = el("button", "btn small ghost") as HTMLButtonElement;
+    exit.textContent = "Beenden";
+    exit.onclick = () => this.endChallenge();
+    right.appendChild(exit);
+    head.appendChild(left);
+    head.appendChild(right);
+    wrap.appendChild(head);
+
+    // Prompter content.
+    let prompterHtml: string;
+    if (c.phase === "train") {
+      const cmd = this.challengeTrainCmd();
+      const trained = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
+      const total = c.commands.length * c.reps;
+      prompterHtml = `<div class="p-label">Übe · lautlos formen</div>
+        <div class="p-big">${escapeHtml(cmd ? commandLabel(cmd) : "")}</div>
+        <div class="p-sub">${trained} / ${total} geübt</div>`;
+    } else {
+      const target = c.testQueue[c.testIdx];
+      if (c.lastCorrect === true) {
+        prompterHtml = `<div class="p-label reveal-correct">Richtig erkannt! ✓</div>
+          <div class="p-big ok">${escapeHtml(commandLabel(c.lastUnderstood!))}</div>`;
+      } else if (c.lastCorrect === false) {
+        prompterHtml = `<div class="p-label reveal-wrong">Knapp daneben</div>
+          <div class="p-big">${escapeHtml(commandLabel(target))}</div>
+          <div class="p-sub">Ich dachte: ${escapeHtml(c.lastUnderstood ? commandLabel(c.lastUnderstood) : "— nichts —")}</div>`;
+      } else {
+        prompterHtml = `<div class="p-label">Form jetzt lautlos</div>
+          <div class="p-big">${escapeHtml(commandLabel(target))}</div>
+          <div class="p-sub">Mal sehen, ob ich dich erkenne…</div>`;
+      }
+    }
+    wrap.appendChild(this.cameraStage(prompterHtml));
+
+    // Hit/miss dots (test phase).
+    if (c.phase === "test") {
+      const dots = el("div", "chal-dots");
+      for (let i = 0; i < c.testQueue.length; i++) {
+        const cls = i < c.results.length ? (c.results[i] ? "hit" : "miss") : "";
+        dots.appendChild(el("span", "d " + cls));
+      }
+      wrap.appendChild(dots);
+    }
+
+    // Dock with the big record button (manual fallback; hands-free also works).
+    const camActive = this.engine?.metrics.cameraActive ?? false;
+    const dock = el("div", "dock");
+    const dleft = el("div", "dock-side left");
+    dleft.textContent = camActive ? (c.busy ? "…" : "lausche…") : "Kamera aus";
+    const recBtn = this.recordButton(async () => {
+      if (!this.engine.metrics.recording) {
+        this.engine.startRecording();
+        this.renderView();
+      } else {
+        const res = this.engine.stopRecording();
+        await this.challengeStop(res);
+      }
+    }, camActive && this.detectorReady && !c.busy);
+    const dright = el("div", "dock-side right");
+    dock.appendChild(dleft);
+    dock.appendChild(recBtn);
+    dock.appendChild(dright);
+    wrap.appendChild(dock);
+
+    const tip = el("p", "muted");
+    tip.style.textAlign = "center";
+    tip.textContent = !camActive
+      ? "Kamera einschalten, dann geht's los."
+      : "Einfach lautlos formen – Start & Stopp passieren automatisch.";
+    wrap.appendChild(tip);
+    return wrap;
+  }
+
+  private ring(value: number, total: number): HTMLElement {
+    const pct = total ? value / total : 0;
+    const r = 24;
+    const circ = 2 * Math.PI * r;
+    const off = circ * (1 - pct);
+    const d = el("div", "ring");
+    d.innerHTML = `<svg width="56" height="56">
+      <circle cx="28" cy="28" r="${r}" stroke="rgba(255,255,255,0.12)" stroke-width="6" fill="none"/>
+      <circle cx="28" cy="28" r="${r}" stroke="var(--accent)" stroke-width="6" fill="none" stroke-linecap="round" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
+    </svg><div class="ring-label">${value}/${total}</div>`;
+    return d;
+  }
+
+  private confettiBurst() {
+    const colors = ["#0a84ff", "#30d158", "#ffd60a", "#ff453a", "#bf5af2", "#64d2ff"];
+    const box = el("div", "confetti");
+    for (let i = 0; i < 48; i++) {
+      const p = el("i");
+      p.style.left = Math.random() * 100 + "vw";
+      p.style.background = colors[i % colors.length];
+      p.style.animationDuration = (1.8 + Math.random() * 1.6).toFixed(2) + "s";
+      p.style.animationDelay = (Math.random() * 0.4).toFixed(2) + "s";
+      box.appendChild(p);
+    }
+    this.root.appendChild(box);
+    window.setTimeout(() => box.remove(), 3800);
   }
 
   /** Collapsible technical details (FPS, tracking, dropped frames). */
@@ -370,6 +671,13 @@ export class SilentTypeApp {
     const wrap = el("div", "stage-wrap");
     const camActive = this.engine?.metrics.cameraActive ?? false;
     const recording = this.engine?.metrics.recording ?? false;
+
+    // Prominent, game-y entry point.
+    const cta = el("button", "btn big") as HTMLButtonElement;
+    cta.textContent = "🎯 Schnell-Challenge starten (2 Min)";
+    cta.style.width = "100%";
+    cta.onclick = () => this.startChallenge();
+    wrap.appendChild(cta);
 
     let prompterHtml: string;
     if (this.lastResult?.commandId) {
