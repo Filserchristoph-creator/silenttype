@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+# Vendored model (downloaded via `npm run fetch-model`) — large binary, not committed.
+public/models/*.task
+# Exported research data (may contain biometric landmark time-series).
+exports/

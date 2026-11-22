@@ -1,0 +1,316 @@
+/* SilentType — minimalist, Apple-inspired UI. Works in light and dark. */
+:root {
+  --bg: #000000;
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-2: rgba(255, 255, 255, 0.1);
+  --text: #f5f5f7;
+  --text-dim: #a1a1a6;
+  --accent: #0a84ff;
+  --ok: #30d158;
+  --warn: #ffd60a;
+  --bad: #ff453a;
+  --radius: 16px;
+  --statusbar-h: 9vh; /* ≤ 10% of screen height, per the brief */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Status bar (top, thin) ---------- */
+.statusbar {
+  height: var(--statusbar-h);
+  min-height: 48px;
+  max-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  padding-top: env(safe-area-inset-top);
+  background: rgba(20, 20, 22, 0.8);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.statusbar .brand {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-size: 15px;
+}
+.statusbar .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  display: inline-block;
+}
+.statusbar .dot.on {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.statusbar .chip {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--surface);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.statusbar .preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0.9;
+}
+.statusbar .status-pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.status-not_recognized { background: rgba(255,69,58,0.18); color: var(--bad); }
+.status-uncertain { background: rgba(255,214,10,0.18); color: var(--warn); }
+.status-probable { background: rgba(10,132,255,0.2); color: var(--accent); }
+.status-confirmed { background: rgba(48,209,88,0.2); color: var(--ok); }
+
+/* ---------- Main area ---------- */
+.main {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 16px;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nav button {
+  background: var(--surface);
+  color: var(--text-dim);
+  border: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.nav button.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.muted { color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+h2 { font-size: 20px; letter-spacing: -0.02em; margin: 0 0 8px; }
+h3 { font-size: 15px; margin: 16px 0 8px; }
+
+/* ---------- Camera + landmark overlay ---------- */
+.stage {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  aspect-ratio: 4 / 3;
+  background: #111;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.stage video,
+.stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* mirror, like a selfie */
+}
+.stage.hidden { display: none; }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.metric {
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.metric .k { font-size: 11px; color: var(--text-dim); }
+.metric .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ---------- Buttons ---------- */
+.btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn.secondary { background: var(--surface-2); color: var(--text); }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.danger { background: rgba(255,69,58,0.18); color: var(--bad); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.big { padding: 16px 22px; font-size: 17px; width: 100%; }
+
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* ---------- Floating input button (bottom-right) ---------- */
+.fab {
+  position: fixed;
+  right: 20px;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  border: none;
+  font-size: 24px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+}
+.fab.recording { background: var(--bad); animation: pulse 1.2s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255,69,58,0.5); }
+  70% { box-shadow: 0 0 0 16px rgba(255,69,58,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,69,58,0); }
+}
+
+.mode-sheet {
+  position: fixed;
+  right: 20px;
+  bottom: calc(92px + env(safe-area-inset-bottom));
+  background: rgba(30,30,32,0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 20;
+}
+.mode-sheet button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.mode-sheet button:hover { background: var(--surface); }
+.mode-sheet button:disabled { color: var(--text-dim); cursor: not-allowed; }
+.mode-sheet .hint { font-size: 11px; color: var(--text-dim); }
+
+/* ---------- Recognition result ---------- */
+.result-command {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 8px 0;
+}
+.alt-list { list-style: none; padding: 0; margin: 8px 0; }
+.alt-list li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ---------- Recording assistant ---------- */
+.prompt-command {
+  font-size: 34px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.02em;
+  margin: 24px 0;
+  min-height: 48px;
+}
+.progress {
+  height: 6px;
+  background: var(--surface);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+.consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 12px 0;
+}
+
+table.report { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.report th, table.report td {
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 4px 6px;
+  text-align: center;
+}
+table.report th { color: var(--text-dim); font-weight: 500; }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: rgba(40,40,42,0.96);
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
