@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v17 · Impressum";
+const BUILD = "v18 · sichtbares Lernen";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -933,6 +933,8 @@ export class SilentTypeApp {
       wrap.appendChild(row);
     }
 
+    wrap.appendChild(this.learnedBadge());
+
     const tip = el("p", "muted");
     tip.style.textAlign = "center";
     tip.textContent =
@@ -1197,6 +1199,8 @@ export class SilentTypeApp {
     kbBtn.onclick = () => this.startKeyboard();
     wrap.appendChild(kbBtn);
 
+    wrap.appendChild(this.learnedBadge());
+
     let prompterHtml: string;
     if (this.lastResult?.commandId) {
       const st = this.lastResult.status;
@@ -1380,6 +1384,21 @@ export class SilentTypeApp {
     const clf = new DtwKnnClassifier();
     clf.fit(samples);
     return clf;
+  }
+
+  private totalLearned(): number {
+    return Object.values(this.counts).reduce((a, b) => a + b, 0);
+  }
+
+  /** Visible proof that the app really learns from stored examples. */
+  private learnedBadge(): HTMLElement {
+    const n = this.totalLearned();
+    const badge = el("div", "learned-badge");
+    badge.innerHTML =
+      n > 0
+        ? `🧠 Deine App hat aus <b>${n}</b> ${n === 1 ? "Beispiel" : "Beispielen"} von dir gelernt — lokal auf diesem Gerät gespeichert.`
+        : `🧠 Noch nichts gelernt. Mach einmal die <b>Geführte Tour</b> oben, dann versteht sie dich.`;
+    return badge;
   }
 
   // ------------------------------------------------------------- training ----

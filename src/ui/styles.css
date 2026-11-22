@@ -268,6 +268,13 @@ h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 18px 0 
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.big { padding: 15px 20px; font-size: 16px; }
 
+/* ---------- Learned badge ---------- */
+.learned-badge {
+  text-align: center; font-size: 13px; line-height: 1.5; color: var(--text);
+  background: var(--accent-soft); border: 1px solid rgba(79,70,229,0.2);
+  border-radius: 12px; padding: 11px 14px;
+}
+
 /* ---------- Keyboard demo ---------- */
 .kb-composer { min-height: 92px; }
 .kb-label {
