@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v16 · aufgeräumt für Tester";
+const BUILD = "v17 · Impressum";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -1769,10 +1769,10 @@ export class SilentTypeApp {
 
       <h3>Impressum</h3>
       <p class="muted">Angaben gemäß § 5 DDG:<br/>
-        [Dein Name]<br/>
-        [Straße, PLZ Ort]<br/>
-        E-Mail: [deine E-Mail-Adresse]<br/>
-        <span style="font-size:12px">(Platzhalter – gib mir deine Angaben, dann trage ich sie ein.)</span>
+        Christoph Filser<br/>
+        Postweg 8<br/>
+        86975 Bernbeuren<br/>
+        E-Mail: kontakt@christophfilser.de
       </p>`;
     wrap.appendChild(legal);
     return wrap;
