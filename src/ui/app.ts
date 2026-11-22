@@ -48,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v9 · Kennenlernen";
+const BUILD = "v10 · Geführte Tour";
 
 /** Styled wordmark with the "U" as a small accent mark. */
 function brandHtml(): string {
@@ -98,6 +98,7 @@ export class SilentTypeApp {
   private challenge: ChallengeState | null = null;
   private learn: { running: boolean; done: boolean; profile: MouthProfile | null } | null = null;
   private mouthProfile: MouthProfile | null = null;
+  private guided = false; // the guided tour (Kennenlernen → Challenge)
   private detectorReady = false;
   private detectorSource = "";
   private lastResult: ClassificationResult | null = null;
@@ -152,21 +153,20 @@ export class SilentTypeApp {
       <h2 class="brand-lg">${brandHtml()}</h2>
       <p class="muted" style="margin-top:0"><b style="color:var(--accent)">${APP_TAGLINE}.</b></p>`;
     card.innerHTML += `
-      <p class="muted">Sprich mit dem Computer, ohne hörbar zu sprechen – nur mit den Lippen. So geht's:</p>
+      <p class="muted">Sprich mit dem Computer, ohne hörbar zu sprechen – nur mit den Lippen. Ich führe dich in 2 kurzen Schritten durch:</p>
       <ul class="intro-steps">
-        <li><span class="num">1</span><span><b>Training:</b> Die App zeigt dir einen Befehl. Form ihn <b>lautlos</b> mit den Lippen. Mit „Hände frei“ startet & speichert sie von selbst – ein <b>grüner Haken ✓</b> zeigt, dass es gespeichert ist.</span></li>
-        <li><span class="num">2</span><span>In der Challenge sprichst du <b>ein paar verschiedene Befehle je einmal</b> ein – die App lernt dabei automatisch. (Mehr Beispiele = noch genauer, aber kein Muss.)</span></li>
-        <li><span class="num">3</span><span><b>Eingabe:</b> Form einen geübten Befehl – die App zeigt dir groß, <b>was sie verstanden hat</b>.</span></li>
+        <li><span class="num">1</span><span><b>Kennenlernen:</b> Du liest ~20 Sek. einen kurzen Text <b>lautlos</b>, ich schaue deinem Mund zu und stelle mich auf dich ein.</span></li>
+        <li><span class="num">2</span><span><b>Challenge:</b> Du formst 3 kurze Befehle lautlos – ich rate, welcher es war. Mit Punkten & Konfetti. 🎉</span></li>
       </ul>
       <p class="muted" style="font-size:12px">Alles bleibt lokal auf deinem Gerät. Kamera nur nach deinem Klick. Kein Video, kein Ton.</p>`;
     const btn = el("button", "btn big") as HTMLButtonElement;
-    btn.textContent = "Challenge starten 🎯";
+    btn.textContent = "Los geht's ▶";
     btn.style.width = "100%";
     btn.style.marginTop = "8px";
     btn.onclick = () => {
       localStorage.setItem("st_seen_intro", "1");
       ov.remove();
-      this.startChallenge();
+      this.startJourney();
     };
     card.appendChild(btn);
     ov.appendChild(card);
@@ -575,6 +575,7 @@ export class SilentTypeApp {
   private endChallenge() {
     if (this.engine?.metrics.recording) this.engine.stopRecording();
     this.challenge = null;
+    this.guided = false;
     this.view = "input";
     this.renderView();
   }
@@ -606,6 +607,12 @@ export class SilentTypeApp {
   }
 
   // ------------------------------------------------------- Kennenlernen ------
+  /** The guided tour: Kennenlernen first, then automatically the Challenge. */
+  private startJourney() {
+    this.guided = true;
+    this.startLearn();
+  }
+
   private startLearn() {
     this.learn = { running: false, done: false, profile: null };
     this.view = "learn";
@@ -615,6 +622,7 @@ export class SilentTypeApp {
   private endLearn() {
     if (this.engine?.metrics.recording) this.engine.stopRecording();
     this.learn = null;
+    this.guided = false;
     this.view = "input";
     this.renderView();
   }
@@ -702,7 +710,7 @@ export class SilentTypeApp {
 
     const head = el("div", "chal-head");
     const left = el("div");
-    left.innerHTML = `<b>Kennenlernen</b><div class="muted" style="font-size:12px">Ich schaue dir beim Mund zu und stelle mich auf dich ein</div>`;
+    left.innerHTML = `<b>${this.guided ? "Schritt 1 von 2 · " : ""}Kennenlernen</b><div class="muted" style="font-size:12px">Ich schaue dir beim Mund zu und stelle mich auf dich ein</div>`;
     const right = el("div", "row");
     const exit = el("button", "btn small ghost") as HTMLButtonElement;
     exit.textContent = "Beenden";
@@ -722,21 +730,33 @@ export class SilentTypeApp {
         <p style="margin-top:10px">Die Live-Balken sind jetzt auf <b>deinen</b> Mund eingestellt – das hilft der Erkennung, dich besser einzuordnen.</p>
         <p class="muted" style="font-size:12px;margin-top:10px">Ehrlich: Freien Text lese ich damit nicht ab (das ist die große Forschungsfrage). Das hier ist Feinjustierung auf dich.</p>`;
       wrap.appendChild(card);
-      const row = el("div", "row");
-      row.style.justifyContent = "center";
-      const toChal = el("button", "btn big") as HTMLButtonElement;
-      toChal.textContent = "Zur Challenge 🎯";
-      toChal.onclick = () => this.startChallenge();
-      const again = el("button", "btn secondary") as HTMLButtonElement;
-      again.textContent = "Nochmal";
-      again.onclick = () => this.startLearn();
-      const fin = el("button", "btn ghost") as HTMLButtonElement;
-      fin.textContent = "Fertig";
-      fin.onclick = () => this.endLearn();
-      row.appendChild(toChal);
-      row.appendChild(again);
-      row.appendChild(fin);
-      wrap.appendChild(row);
+      if (this.guided) {
+        const go = el("button", "btn big") as HTMLButtonElement;
+        go.style.width = "100%";
+        go.textContent = "Weiter zur Challenge ▶";
+        go.onclick = () => this.startChallenge(); // keeps the guided flag
+        wrap.appendChild(go);
+        const skip = el("p", "muted");
+        skip.style.textAlign = "center";
+        skip.textContent = "Schritt 1 von 2 geschafft — jetzt rate ich dich.";
+        wrap.appendChild(skip);
+      } else {
+        const row = el("div", "row");
+        row.style.justifyContent = "center";
+        const toChal = el("button", "btn big") as HTMLButtonElement;
+        toChal.textContent = "Zur Challenge 🎯";
+        toChal.onclick = () => this.startChallenge();
+        const again = el("button", "btn secondary") as HTMLButtonElement;
+        again.textContent = "Nochmal";
+        again.onclick = () => this.startLearn();
+        const fin = el("button", "btn ghost") as HTMLButtonElement;
+        fin.textContent = "Fertig";
+        fin.onclick = () => this.endLearn();
+        row.appendChild(toChal);
+        row.appendChild(again);
+        row.appendChild(fin);
+        wrap.appendChild(row);
+      }
       return wrap;
     }
 
@@ -833,10 +853,15 @@ export class SilentTypeApp {
     // Header: title · progress/score · exit.
     const head = el("div", "chal-head");
     const left = el("div");
-    left.innerHTML =
-      c.phase === "train"
-        ? `<b>Schnell-Challenge</b><div class="muted" style="font-size:12px">Schritt 1: ${c.commands.length} Befehle je einmal</div>`
-        : `<b>Rate-Runde</b><div class="muted" style="font-size:12px">Schritt 2: Erkenne ich dich?</div>`;
+    {
+      const prefix = this.guided ? "Schritt 2 von 2 · " : "";
+      const title = c.phase === "train" ? "Challenge" : "Rate-Runde";
+      const sub =
+        c.phase === "train"
+          ? `${c.commands.length} Befehle je einmal`
+          : "Erkenne ich dich?";
+      left.innerHTML = `<b>${prefix}${title}</b><div class="muted" style="font-size:12px">${sub}</div>`;
+    }
     const right = el("div", "row");
     if (c.phase === "train") {
       const trained = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
@@ -1010,20 +1035,25 @@ export class SilentTypeApp {
     const camActive = this.engine?.metrics.cameraActive ?? false;
     const recording = this.engine?.metrics.recording ?? false;
 
-    // Prominent, game-y entry point.
-    const cta = el("button", "btn big") as HTMLButtonElement;
-    cta.textContent = "🎯 Schnell-Challenge starten (2 Min)";
-    cta.style.width = "100%";
-    cta.onclick = () => this.startChallenge();
-    wrap.appendChild(cta);
+    // Prominent guided tour, plus the two single steps for returning users.
+    const tour = el("button", "btn big") as HTMLButtonElement;
+    tour.textContent = "✨ Geführte Tour starten (2 Min)";
+    tour.style.width = "100%";
+    tour.onclick = () => this.startJourney();
+    wrap.appendChild(tour);
 
+    const entryRow = el("div", "row");
+    const cta = el("button", "btn secondary") as HTMLButtonElement;
+    cta.textContent = "Nur Challenge 🎯";
+    cta.style.flex = "1";
+    cta.onclick = () => this.startChallenge();
     const learnBtn = el("button", "btn secondary") as HTMLButtonElement;
-    learnBtn.textContent = this.mouthProfile
-      ? "🙂 Kennenlernen wiederholen"
-      : "🙂 Mich kennenlernen (20 Sek.)";
-    learnBtn.style.width = "100%";
+    learnBtn.textContent = "Nur Kennenlernen 🙂";
+    learnBtn.style.flex = "1";
     learnBtn.onclick = () => this.startLearn();
-    wrap.appendChild(learnBtn);
+    entryRow.appendChild(cta);
+    entryRow.appendChild(learnBtn);
+    wrap.appendChild(entryRow);
 
     let prompterHtml: string;
     if (this.lastResult?.commandId) {
