@@ -21,11 +21,12 @@ import { detectDevice, isSecureContextOk } from "../platform/device.ts";
 import type {
   ClassificationResult,
   InputMode,
+  LandmarkFrame,
   Recording,
   RecognitionStatus,
 } from "../core/types.ts";
 
-type View = "input" | "training" | "eval" | "about" | "challenge";
+type View = "input" | "training" | "eval" | "about" | "challenge" | "learn";
 
 interface ChallengeState {
   phase: "train" | "test" | "done";
@@ -47,7 +48,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v8 · ruhiger Start";
+const BUILD = "v9 · Kennenlernen";
 
 /** Styled wordmark with the "U" as a small accent mark. */
 function brandHtml(): string {
@@ -60,6 +61,20 @@ const CHALLENGE_COMMANDS = [
   "oeffne_meinen_kalender",
   "text_kopieren",
 ];
+
+// "Kennenlernen" (calibration) mode.
+const LEARN_MS = 22000;
+const LEARN_TEXT =
+  "Lies diesen Text einfach ruhig und lautlos mit den Lippen – ganz natürlich, als würdest du ihn jemandem vorlesen. Du musst nichts genau treffen. Ich schaue dir dabei zu und lerne, wie sich dein Mund bewegt: wie weit du ihn öffnest, wie breit dein Lächeln ist und wie schnell du sprichst. Danach bin ich besser auf dich eingestellt – und die Erkennung fällt mir leichter.";
+
+interface MouthProfile {
+  openMean: number;
+  openMax: number;
+  widthMean: number;
+  seconds: number;
+  samples: number;
+  createdAt: string;
+}
 
 const TARGET_REPS = 10; // per command → 200 total for one speaker
 
@@ -81,6 +96,8 @@ export class SilentTypeApp {
   private autoMode = (localStorage.getItem("st_auto") ?? "1") === "1";
   private flashSaved: string | null = null;
   private challenge: ChallengeState | null = null;
+  private learn: { running: boolean; done: boolean; profile: MouthProfile | null } | null = null;
+  private mouthProfile: MouthProfile | null = null;
   private detectorReady = false;
   private detectorSource = "";
   private lastResult: ClassificationResult | null = null;
@@ -104,6 +121,7 @@ export class SilentTypeApp {
     this.engine.onMetrics = (m) => this.onMetrics(m);
     this.engine.onAutoStart = () => this.renderView();
     this.engine.onAutoStop = (res) => this.handleAutoStop(res);
+    this.mouthProfile = this.loadProfile();
     this.counts = await countByCommand();
     this.renderView();
 
@@ -220,7 +238,9 @@ export class SilentTypeApp {
         (this.view === "input" || this.view === "training");
     // Hide the tab bar during the focused challenge.
     const nav = this.root.querySelector(".nav") as HTMLElement | null;
-    if (nav) nav.style.display = this.view === "challenge" ? "none" : "inline-flex";
+    if (nav)
+      nav.style.display =
+        this.view === "challenge" || this.view === "learn" ? "none" : "inline-flex";
     // nav active state
     this.root.querySelectorAll(".nav button").forEach((b) => {
       const btn = b as HTMLButtonElement;
@@ -229,6 +249,7 @@ export class SilentTypeApp {
     const content = this.root.querySelector("#content") as HTMLElement;
     content.innerHTML = "";
     if (this.view === "challenge") content.appendChild(this.renderChallenge());
+    else if (this.view === "learn") content.appendChild(this.renderLearn());
     else if (this.view === "input") content.appendChild(this.renderInput());
     else if (this.view === "training") content.appendChild(this.renderTraining());
     else if (this.view === "eval") content.appendChild(this.renderEval());
@@ -258,7 +279,14 @@ export class SilentTypeApp {
       const ov = this.root.querySelector("#m-open-v");
       if (ov) ov.textContent = open.toFixed(3);
       const ob = this.root.querySelector("#m-open-bar") as HTMLElement | null;
-      if (ob) ob.style.width = Math.min(100, open * 300).toFixed(0) + "%";
+      if (ob) {
+        // After "Kennenlernen", scale the bar to the user's own mouth range.
+        const scale =
+          this.mouthProfile && this.mouthProfile.openMax > 0.01
+            ? 100 / this.mouthProfile.openMax
+            : 300;
+        ob.style.width = Math.min(100, open * scale).toFixed(0) + "%";
+      }
       const wv = this.root.querySelector("#m-width-v");
       if (wv) wv.textContent = width.toFixed(3);
       const wb = this.root.querySelector("#m-width-bar") as HTMLElement | null;
@@ -273,6 +301,17 @@ export class SilentTypeApp {
       if (s) s.textContent = (m.recordingMs / 1000).toFixed(1);
       const fr = this.root.querySelector("#m-recframes");
       if (fr) fr.textContent = String(m.recordingFrames);
+    }
+
+    // Kennenlernen progress.
+    if (this.learn?.running) {
+      const p = Math.min(100, (m.recordingMs / LEARN_MS) * 100);
+      const bar = this.root.querySelector("#learn-bar") as HTMLElement | null;
+      if (bar) bar.style.width = p.toFixed(0) + "%";
+      const tmr = this.root.querySelector("#learn-timer");
+      if (tmr)
+        tmr.textContent =
+          Math.max(0, Math.ceil((LEARN_MS - m.recordingMs) / 1000)) + " s";
     }
   }
 
@@ -566,6 +605,186 @@ export class SilentTypeApp {
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
   }
 
+  // ------------------------------------------------------- Kennenlernen ------
+  private startLearn() {
+    this.learn = { running: false, done: false, profile: null };
+    this.view = "learn";
+    this.renderView();
+  }
+
+  private endLearn() {
+    if (this.engine?.metrics.recording) this.engine.stopRecording();
+    this.learn = null;
+    this.view = "input";
+    this.renderView();
+  }
+
+  private stopLearn() {
+    if (this.learn) this.learn.running = false; // the run loop finalizes
+  }
+
+  private loadProfile(): MouthProfile | null {
+    try {
+      const s = localStorage.getItem("st_profile");
+      return s ? (JSON.parse(s) as MouthProfile) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async runLearn() {
+    const l = this.learn;
+    if (!l || l.running) return;
+    if (!this.detectorReady) return;
+    if (!this.engine.metrics.cameraActive) {
+      try {
+        await this.engine.startCamera();
+      } catch {
+        this.toast("Kamera-Zugriff nötig – bitte erlauben.");
+        return;
+      }
+    }
+    if (this.learn !== l) return;
+    l.running = true;
+    this.engine.startRecording();
+    this.renderView();
+    const t0 = performance.now();
+    while (this.learn === l && l.running && performance.now() - t0 < LEARN_MS) {
+      await delay(200);
+    }
+    if (this.learn !== l) {
+      if (this.engine.metrics.recording) this.engine.stopRecording();
+      return;
+    }
+    const res = this.engine.stopRecording();
+    l.profile = this.computeProfile(res.frames);
+    if (l.profile) {
+      this.mouthProfile = l.profile;
+      try {
+        localStorage.setItem("st_profile", JSON.stringify(l.profile));
+      } catch {
+        /* ignore */
+      }
+    }
+    l.running = false;
+    l.done = true;
+    this.renderView();
+    if (l.profile) this.confettiBurst();
+  }
+
+  private computeProfile(frames: LandmarkFrame[]): MouthProfile | null {
+    if (frames.length < 10) return null;
+    const opens: number[] = [];
+    const widths: number[] = [];
+    for (const f of frames) {
+      if (f.quality < 0.2) continue;
+      const ff = frameFeatures(f);
+      opens.push(ff[ff.length - 3]);
+      widths.push(ff[ff.length - 2]);
+    }
+    if (opens.length < 5) return null;
+    const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+    const sorted = [...opens].sort((a, b) => a - b);
+    const openMax = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+    return {
+      openMean: mean(opens),
+      openMax: openMax || mean(opens) * 2,
+      widthMean: mean(widths),
+      seconds: Math.round((frames[frames.length - 1].t - frames[0].t) / 1000),
+      samples: opens.length,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  private renderLearn(): HTMLElement {
+    const l = this.learn!;
+    const wrap = el("div", "stage-wrap");
+
+    const head = el("div", "chal-head");
+    const left = el("div");
+    left.innerHTML = `<b>Kennenlernen</b><div class="muted" style="font-size:12px">Ich schaue dir beim Mund zu und stelle mich auf dich ein</div>`;
+    const right = el("div", "row");
+    const exit = el("button", "btn small ghost") as HTMLButtonElement;
+    exit.textContent = "Beenden";
+    exit.onclick = () => this.endLearn();
+    right.appendChild(exit);
+    head.appendChild(left);
+    head.appendChild(right);
+    wrap.appendChild(head);
+
+    // Done → honest summary.
+    if (l.done && l.profile) {
+      const p = l.profile;
+      const card = el("div", "card celebrate");
+      card.innerHTML = `<div class="emoji">🙂</div>
+        <h2 class="brand-lg" style="font-size:26px">Ich kenne dich jetzt besser</h2>
+        <p class="muted">${p.seconds} Sek. beobachtet · ${p.samples} Messpunkte · dein persönliches Mund-Profil gespeichert.</p>
+        <p style="margin-top:10px">Die Live-Balken sind jetzt auf <b>deinen</b> Mund eingestellt – das hilft der Erkennung, dich besser einzuordnen.</p>
+        <p class="muted" style="font-size:12px;margin-top:10px">Ehrlich: Freien Text lese ich damit nicht ab (das ist die große Forschungsfrage). Das hier ist Feinjustierung auf dich.</p>`;
+      wrap.appendChild(card);
+      const row = el("div", "row");
+      row.style.justifyContent = "center";
+      const toChal = el("button", "btn big") as HTMLButtonElement;
+      toChal.textContent = "Zur Challenge 🎯";
+      toChal.onclick = () => this.startChallenge();
+      const again = el("button", "btn secondary") as HTMLButtonElement;
+      again.textContent = "Nochmal";
+      again.onclick = () => this.startLearn();
+      const fin = el("button", "btn ghost") as HTMLButtonElement;
+      fin.textContent = "Fertig";
+      fin.onclick = () => this.endLearn();
+      row.appendChild(toChal);
+      row.appendChild(again);
+      row.appendChild(fin);
+      wrap.appendChild(row);
+      return wrap;
+    }
+
+    // Pre-start → no camera.
+    if (!l.running) {
+      const card = el("div", "card");
+      card.innerHTML = `<h2 class="brand-lg" style="font-size:26px;margin-bottom:6px">Darf ich dich kennenlernen?</h2>
+        <p class="muted">Du liest gleich ~20 Sekunden einen kurzen Text <b>lautlos</b> mit den Lippen – ganz natürlich. Ich schaue dir dabei zu und stelle mich auf deinen Mund ein. <b>Kein Ton, nichts wird hochgeladen.</b> Die Kamera geht erst beim Start an.</p>`;
+      wrap.appendChild(card);
+      const go = el("button", "btn big") as HTMLButtonElement;
+      go.style.width = "100%";
+      go.textContent = "Los geht's ▶";
+      go.disabled = !this.detectorReady;
+      go.onclick = () => this.runLearn();
+      wrap.appendChild(go);
+      return wrap;
+    }
+
+    // Running → text to read + camera + progress.
+    const textCard = el("div", "card");
+    textCard.innerHTML = `<p style="font-size:17px;line-height:1.65;margin:0">${escapeHtml(LEARN_TEXT)}</p>`;
+    wrap.appendChild(textCard);
+
+    wrap.appendChild(
+      this.cameraStage(
+        `<div class="p-label">👁️ Ich schaue zu & lerne…</div><div class="p-sub" style="margin-top:4px">Lies den Text oben ruhig lautlos vor</div>`,
+      ),
+    );
+
+    const prog = el("div", "progress");
+    const span = el("span");
+    span.id = "learn-bar";
+    span.style.width = "0%";
+    prog.appendChild(span);
+    wrap.appendChild(prog);
+    const info = el("p", "muted");
+    info.style.textAlign = "center";
+    info.innerHTML = `Noch <span id="learn-timer">…</span> · lies einfach weiter`;
+    wrap.appendChild(info);
+
+    const doneBtn = el("button", "btn big secondary") as HTMLButtonElement;
+    doneBtn.style.width = "100%";
+    doneBtn.textContent = "Fertig ✓";
+    doneBtn.onclick = () => this.stopLearn();
+    wrap.appendChild(doneBtn);
+    return wrap;
+  }
+
   private renderChallenge(): HTMLElement {
     const c = this.challenge!;
     const wrap = el("div", "stage-wrap");
@@ -797,6 +1016,14 @@ export class SilentTypeApp {
     cta.style.width = "100%";
     cta.onclick = () => this.startChallenge();
     wrap.appendChild(cta);
+
+    const learnBtn = el("button", "btn secondary") as HTMLButtonElement;
+    learnBtn.textContent = this.mouthProfile
+      ? "🙂 Kennenlernen wiederholen"
+      : "🙂 Mich kennenlernen (20 Sek.)";
+    learnBtn.style.width = "100%";
+    learnBtn.onclick = () => this.startLearn();
+    wrap.appendChild(learnBtn);
 
     let prompterHtml: string;
     if (this.lastResult?.commandId) {
