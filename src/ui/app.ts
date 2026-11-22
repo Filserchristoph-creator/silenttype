@@ -1,6 +1,6 @@
-import { CaptureEngine, type LiveMetrics } from "./engine.ts";
+import { CaptureEngine, type LiveMetrics, type RecordingResult } from "./engine.ts";
 import { COMMANDS, commandLabel } from "../core/commands.ts";
-import { extractFeatures, smooth } from "../core/features.ts";
+import { extractFeatures, smooth, frameFeatures } from "../core/features.ts";
 import { DtwKnnClassifier } from "../core/classifier.ts";
 import {
   getAllRecordings,
@@ -44,7 +44,8 @@ export class SilentTypeApp {
 
   private view: View = "input";
   private mode: InputMode = "silent";
-  private modeSheetOpen = false;
+  private autoMode = (localStorage.getItem("st_auto") ?? "1") === "1";
+  private flashSaved: string | null = null;
   private detectorReady = false;
   private detectorSource = "";
   private lastResult: ClassificationResult | null = null;
@@ -66,6 +67,8 @@ export class SilentTypeApp {
     this.renderShell();
     this.engine = new CaptureEngine(this.video, this.canvas);
     this.engine.onMetrics = (m) => this.onMetrics(m);
+    this.engine.onAutoStart = () => this.renderView();
+    this.engine.onAutoStop = (res) => this.handleAutoStop(res);
     this.counts = await countByCommand();
     this.renderView();
 
@@ -80,6 +83,39 @@ export class SilentTypeApp {
       console.error("Detector init failed", e);
     }
     this.renderView();
+    this.maybeShowIntro();
+  }
+
+  private maybeShowIntro() {
+    if (localStorage.getItem("st_seen_intro") === "1") return;
+    this.showIntro();
+  }
+
+  /** First-run welcome: explains in 3 steps what to do. Reopenable from Info. */
+  private showIntro() {
+    const ov = el("div", "intro-overlay");
+    const card = el("div", "intro-card");
+    card.innerHTML = `
+      <h2>Willkommen bei SilentType</h2>
+      <p class="muted">Sprich mit dem Computer, ohne hörbar zu sprechen – nur mit den Lippen. So geht's:</p>
+      <ul class="intro-steps">
+        <li><span class="num">1</span><span><b>Training:</b> Die App zeigt dir einen Befehl. Form ihn <b>lautlos</b> mit den Lippen. Mit „Hände frei“ startet & speichert sie von selbst – ein <b>grüner Haken ✓</b> zeigt, dass es gespeichert ist.</span></li>
+        <li><span class="num">2</span><span>Mach das <b>ein paar Mal pro Befehl</b> (Ziel 10×). Je mehr Beispiele, desto besser lernt die App – ganz automatisch, ohne Extra-Schritte.</span></li>
+        <li><span class="num">3</span><span><b>Eingabe:</b> Form einen geübten Befehl – die App zeigt dir groß, <b>was sie verstanden hat</b>.</span></li>
+      </ul>
+      <p class="muted" style="font-size:12px">Alles bleibt lokal auf deinem Gerät. Kamera nur nach deinem Klick. Kein Video, kein Ton.</p>`;
+    const btn = el("button", "btn big") as HTMLButtonElement;
+    btn.textContent = "Los geht's";
+    btn.style.width = "100%";
+    btn.style.marginTop = "8px";
+    btn.onclick = () => {
+      localStorage.setItem("st_seen_intro", "1");
+      ov.remove();
+      this.switchView("training");
+    };
+    card.appendChild(btn);
+    ov.appendChild(card);
+    this.root.appendChild(ov);
   }
 
   // ---------------------------------------------------------------- shell ----
@@ -120,25 +156,28 @@ export class SilentTypeApp {
     this.video.muted = true;
     this.canvas = el("canvas") as HTMLCanvasElement;
 
-    // Floating input button + mode sheet container
-    const fab = el("button", "fab") as HTMLButtonElement;
-    fab.id = "fab";
-    fab.textContent = "⌨";
-    fab.title = "Eingabe";
-    fab.onclick = () => this.onFab();
-
     this.root.appendChild(bar);
     this.root.appendChild(main);
-    this.root.appendChild(fab);
+
+    // Mode chip: silent-only in the PoC; tapping explains the voice-mode state.
+    const chip = bar.querySelector("#mode-chip") as HTMLElement | null;
+    if (chip)
+      chip.onclick = () =>
+        this.toast(
+          "Nur lautloser Modus. Der Sprachmodus (Mikrofon) ist im PoC bewusst nicht implementiert.",
+        );
   }
 
   private switchView(v: View) {
     this.view = v;
-    this.modeSheetOpen = false;
     this.renderView();
   }
 
   private renderView() {
+    // Hands-free is only armed in the camera views.
+    if (this.engine)
+      this.engine.autoSegment =
+        this.autoMode && (this.view === "input" || this.view === "training");
     // nav active state
     this.root.querySelectorAll(".nav button").forEach((b) => {
       const btn = b as HTMLButtonElement;
@@ -151,10 +190,6 @@ export class SilentTypeApp {
     else if (this.view === "eval") content.appendChild(this.renderEval());
     else content.appendChild(this.renderAbout());
 
-    // FAB only relevant in the input view.
-    (this.root.querySelector("#fab") as HTMLElement).style.display =
-      this.view === "input" ? "grid" : "none";
-    this.renderModeSheet();
     this.updateStatusBar();
   }
 
@@ -170,8 +205,31 @@ export class SilentTypeApp {
     if (pf) pf.textContent = String(m.processedFrames);
     const df = this.root.querySelector("#m-df");
     if (df) df.textContent = String(m.droppedFrames);
-    const rec = this.root.querySelector("#m-rec");
-    if (rec) rec.textContent = m.recording ? "läuft…" : "–";
+
+    // Live mouth measurements — show the user exactly what is being written.
+    if (m.lastFrame) {
+      const f = frameFeatures(m.lastFrame);
+      const open = f[f.length - 3];
+      const width = f[f.length - 2];
+      const ov = this.root.querySelector("#m-open-v");
+      if (ov) ov.textContent = open.toFixed(3);
+      const ob = this.root.querySelector("#m-open-bar") as HTMLElement | null;
+      if (ob) ob.style.width = Math.min(100, open * 300).toFixed(0) + "%";
+      const wv = this.root.querySelector("#m-width-v");
+      if (wv) wv.textContent = width.toFixed(3);
+      const wb = this.root.querySelector("#m-width-bar") as HTMLElement | null;
+      if (wb) wb.style.width = Math.min(100, width * 120).toFixed(0) + "%";
+    }
+
+    // Recording banner with live elapsed time + captured points.
+    const banner = this.root.querySelector("#rec-banner") as HTMLElement | null;
+    if (banner) {
+      banner.style.display = m.recording ? "block" : "none";
+      const s = this.root.querySelector("#m-recsec");
+      if (s) s.textContent = (m.recordingMs / 1000).toFixed(1);
+      const fr = this.root.querySelector("#m-recframes");
+      if (fr) fr.textContent = String(m.recordingFrames);
+    }
   }
 
   private updateStatusBar() {
@@ -193,112 +251,230 @@ export class SilentTypeApp {
     dot?.classList.toggle("on", this.engine?.metrics.cameraActive ?? false);
   }
 
+  // ------------------------------------------------------- shared stage ------
+  /** The camera stage (hero) with teleprompter, recording indicator, live meters. */
+  private cameraStage(prompterHtml: string): HTMLElement {
+    const stage = el("div", "stage");
+    stage.appendChild(this.video);
+    stage.appendChild(this.canvas);
+
+    const prompter = el("div", "prompter");
+    prompter.innerHTML = prompterHtml;
+    stage.appendChild(prompter);
+
+    const rec = el("div", "rec-indicator");
+    rec.id = "rec-banner";
+    rec.style.display = "none";
+    rec.innerHTML = `🔴 <span id="m-recsec">0.0</span>s · <span id="m-recframes">0</span> Punkte`;
+    stage.appendChild(rec);
+
+    const meters = el("div", "meters");
+    meters.innerHTML = `
+      <div class="meter-row"><span>Mund auf</span><div class="bar"><span id="m-open-bar"></span></div><span class="mv" id="m-open-v">–</span></div>
+      <div class="meter-row"><span>Mund breit</span><div class="bar"><span class="ok" id="m-width-bar"></span></div><span class="mv" id="m-width-v">–</span></div>`;
+    stage.appendChild(meters);
+
+    if (!this.engine?.metrics.cameraActive) {
+      const off = el("div", "cam-off");
+      const icon = el("div", "icon");
+      icon.textContent = "📷";
+      const p = el("p");
+      p.textContent = this.detectorReady
+        ? "Kamera ist aus. Schalte sie ein, um deine Lippen zu sehen und aufzunehmen."
+        : this.detectorSource === "error"
+          ? "Erkennungs-Modell konnte nicht geladen werden. Bitte Internet prüfen und die Seite neu laden."
+          : "Modell wird geladen…";
+      const btn = el("button", "btn big") as HTMLButtonElement;
+      btn.textContent = "Kamera einschalten";
+      btn.disabled = !this.detectorReady;
+      btn.onclick = () => this.toggleCamera();
+      off.appendChild(icon);
+      off.appendChild(p);
+      off.appendChild(btn);
+      stage.appendChild(off);
+    }
+    return stage;
+  }
+
+  /** The big camera-style record button. */
+  private recordButton(onToggle: () => void, enabled: boolean): HTMLButtonElement {
+    const recording = this.engine?.metrics.recording ?? false;
+    const camActive = this.engine?.metrics.cameraActive ?? false;
+    const btn = el("button", "record-btn") as HTMLButtonElement;
+    if (recording) btn.classList.add("recording");
+    else if (this.autoMode && camActive) btn.classList.add("listening");
+    btn.disabled = !enabled;
+    btn.title = recording ? "Stopp" : "Aufnahme starten";
+    btn.innerHTML = `<span class="inner"></span>`;
+    btn.onclick = onToggle;
+    return btn;
+  }
+
+  /** Hands-free on/off switch. */
+  private autoToggle(): HTMLElement {
+    const wrap = el("label", "auto-toggle");
+    const text = el("span");
+    text.textContent = "✋ Hände frei (automatisch)";
+    const sw = el("span", "switch" + (this.autoMode ? " on" : ""));
+    wrap.appendChild(text);
+    wrap.appendChild(sw);
+    wrap.onclick = () => {
+      this.autoMode = !this.autoMode;
+      localStorage.setItem("st_auto", this.autoMode ? "1" : "0");
+      this.toast(
+        this.autoMode
+          ? "Hände frei an: Einfach lautlos formen – Aufnahme startet & stoppt von selbst."
+          : "Hände frei aus: Mit dem großen Knopf selbst starten & stoppen.",
+      );
+      this.renderView();
+    };
+    return wrap;
+  }
+
+  /** Called by the engine when it auto-detects the end of an utterance. */
+  private async handleAutoStop(res: RecordingResult) {
+    if (this.view === "training") {
+      const current = this.order[this.orderIndex];
+      if (current) await this.saveTrainingSample(current, res);
+      else this.renderView();
+    } else if (this.view === "input") {
+      await this.recognize(res);
+    } else {
+      this.renderView();
+    }
+  }
+
+  /** Collapsible technical details (FPS, tracking, dropped frames). */
+  private detailsPanel(): HTMLElement {
+    const d = el("details", "panel");
+    d.innerHTML = `
+      <summary>Technische Details</summary>
+      <div class="metrics">
+        <div class="metric"><div class="k">Bilder/Sek</div><div class="v" id="m-fps">0</div></div>
+        <div class="metric"><div class="k">Tracking</div><div class="v" id="m-q">0%</div></div>
+        <div class="metric"><div class="k">Erkannt</div><div class="v" id="m-pf">0</div></div>
+        <div class="metric"><div class="k">Verloren</div><div class="v" id="m-df">0</div></div>
+      </div>
+      <p class="muted" style="padding-bottom:12px">Modell-Quelle: ${
+        this.detectorSource === "local"
+          ? "lokal (offline)"
+          : this.detectorSource === "error"
+            ? "Fehler beim Laden"
+            : "Google-CDN"
+      }. Die Lippen-Balken oben zeigen live, was aufgezeichnet wird.</p>`;
+    return d;
+  }
+
   // --------------------------------------------------------------- input -----
   private renderInput(): HTMLElement {
-    const wrap = el("div");
+    const wrap = el("div", "stage-wrap");
+    const camActive = this.engine?.metrics.cameraActive ?? false;
+    const recording = this.engine?.metrics.recording ?? false;
 
+    let prompterHtml: string;
+    if (this.lastResult?.commandId) {
+      const st = this.lastResult.status;
+      const cls = st === "uncertain" ? "warn" : "ok";
+      prompterHtml = `<div class="p-label">Verstanden · ${STATUS_LABEL[st]}</div>
+        <div class="p-big ${cls}">${escapeHtml(commandLabel(this.lastResult.commandId))}</div>
+        <div class="p-sub">Sicherheit ${(this.lastResult.confidence * 100).toFixed(0)} % (unkalibriert) · ${this.lastResult.processingMs.toFixed(0)} ms</div>`;
+    } else if (this.lastResult) {
+      prompterHtml = `<div class="p-label">Ergebnis</div>
+        <div class="p-big bad">Nicht erkannt</div>
+        <div class="p-sub">Zu unsicher – bitte erneut versuchen.</div>`;
+    } else {
+      const big = recording
+        ? "Jetzt lautlos formen…"
+        : camActive && this.autoMode
+          ? "Lausche…"
+          : "Bereit";
+      const sub = !camActive
+        ? "Kamera einschalten, um zu starten"
+        : this.autoMode
+          ? "Einfach lautlos losformen – ich erkenne Anfang & Ende selbst."
+          : "Großer Knopf = Aufnahme starten / stoppen";
+      prompterHtml = `<div class="p-label">Lautlose Eingabe</div>
+        <div class="p-big placeholder">${big}</div>
+        <div class="p-sub">${sub}</div>`;
+    }
+
+    wrap.appendChild(this.cameraStage(prompterHtml));
     if (!isSecureContextOk()) {
       wrap.appendChild(
         warnCard(
           "Kein sicherer Kontext",
-          "Die Kamera funktioniert nur über https:// oder localhost. Auf dem iPhone bitte die https-Adresse öffnen (siehe README, Abschnitt iPhone-Test).",
+          "Die Kamera funktioniert nur über https:// oder localhost. Auf dem iPhone bitte die https-Adresse öffnen (siehe README).",
         ),
       );
     }
+    wrap.appendChild(this.autoToggle());
 
-    const stage = el("div", "stage");
-    stage.appendChild(this.video);
-    stage.appendChild(this.canvas);
-    wrap.appendChild(stage);
+    const dock = el("div", "dock");
+    const left = el("div", "dock-side left");
+    left.textContent = recording
+      ? "läuft…"
+      : camActive && this.autoMode
+        ? "lausche…"
+        : camActive
+          ? "bereit"
+          : "Kamera aus";
+    const recBtn = this.recordButton(async () => {
+      if (!this.engine.metrics.recording) {
+        this.engine.startRecording();
+        this.renderView();
+      } else {
+        const res = this.engine.stopRecording();
+        await this.recognize(res);
+      }
+    }, camActive && this.detectorReady);
+    const right = el("div", "dock-side right");
+    if (camActive) {
+      const off = el("button", "btn small secondary") as HTMLButtonElement;
+      off.textContent = "Kamera aus";
+      off.onclick = () => this.toggleCamera();
+      right.appendChild(off);
+    }
+    dock.appendChild(left);
+    dock.appendChild(recBtn);
+    dock.appendChild(right);
+    wrap.appendChild(dock);
 
-    // Live metrics (satisfies the "dev mode" requirement).
-    wrap.appendChild(this.metricsCard());
-
-    const controls = el("div", "card");
-    const status = this.detectorReady
-      ? `Modell geladen (Quelle: ${this.detectorSource === "local" ? "lokal" : "CDN"}).`
-      : this.detectorSource === "error"
-        ? "⚠️ Modell konnte nicht geladen werden (Internet für den ersten Download nötig)."
-        : "Modell wird geladen…";
-    const info = el("p", "muted");
-    info.textContent = status;
-    controls.appendChild(info);
-
-    const row = el("div", "row");
-    const camBtn = el("button", "btn") as HTMLButtonElement;
-    camBtn.textContent = this.engine?.metrics.cameraActive
-      ? "Kamera aus"
-      : "Kamera einschalten";
-    camBtn.onclick = () => this.toggleCamera();
-    row.appendChild(camBtn);
-
-    const recBtn = el("button", "btn secondary") as HTMLButtonElement;
-    recBtn.textContent = "Aufnehmen & Erkennen";
-    recBtn.disabled = !this.engine?.metrics.cameraActive || !this.detectorReady;
-    recBtn.onclick = () => this.recordAndRecognize(recBtn);
-    row.appendChild(recBtn);
-    controls.appendChild(row);
+    if (this.lastResult) wrap.appendChild(this.resultDetails(this.lastResult));
 
     const hint = el("p", "muted");
-    hint.style.marginTop = "10px";
+    hint.style.textAlign = "center";
     hint.textContent =
-      "Hinweis: Erkennung braucht zuerst Trainingsdaten. Nimm im Tab „Training“ einige Befehle auf – sonst kann das System nichts erkennen.";
-    controls.appendChild(hint);
-    wrap.appendChild(controls);
-
-    // Result card
-    if (this.lastResult) wrap.appendChild(this.resultCard(this.lastResult));
+      "Tipp: Die Erkennung braucht zuerst Trainingsdaten – nimm im Tab „Training“ einige Befehle auf.";
+    wrap.appendChild(hint);
+    wrap.appendChild(this.detailsPanel());
     return wrap;
   }
 
-  private metricsCard(): HTMLElement {
+  private resultDetails(r: ClassificationResult): HTMLElement {
     const card = el("div", "card");
-    card.innerHTML = `
-      <h3 style="margin-top:0">Live-Messwerte</h3>
-      <div class="metrics">
-        <div class="metric"><div class="k">FPS</div><div class="v" id="m-fps">0</div></div>
-        <div class="metric"><div class="k">Tracking</div><div class="v" id="m-q">0%</div></div>
-        <div class="metric"><div class="k">Frames</div><div class="v" id="m-pf">0</div></div>
-        <div class="metric"><div class="k">Verloren</div><div class="v" id="m-df">0</div></div>
-        <div class="metric"><div class="k">Aufnahme</div><div class="v" id="m-rec">–</div></div>
-      </div>`;
-    return card;
-  }
-
-  private resultCard(r: ClassificationResult): HTMLElement {
-    const card = el("div", "card");
-    const label = r.commandId ? commandLabel(r.commandId) : "— nicht erkannt —";
-    card.innerHTML = `
-      <h3 style="margin-top:0">Ergebnis</h3>
-      <div class="result-command">${escapeHtml(label)}</div>
-      <p class="muted">Status: <b>${STATUS_LABEL[r.status]}</b> ·
-         Konfidenz (unkalibriert): ${(r.confidence * 100).toFixed(0)}% ·
-         ${r.processingMs.toFixed(0)} ms</p>
-    `;
     if (r.alternatives.length) {
       const h = el("h3");
-      h.textContent = "Alternativen (kleinere Distanz = ähnlicher)";
+      h.style.marginTop = "0";
+      h.textContent = "Nächste Kandidaten (kleinere Distanz = ähnlicher)";
       card.appendChild(h);
       const ul = el("ul", "alt-list");
       for (const a of r.alternatives.slice(0, 5)) {
         const li = el("li");
-        li.innerHTML = `<span>${escapeHtml(commandLabel(a.commandId))}</span><span>${a.distance.toFixed(
-          3,
-        )}</span>`;
+        li.innerHTML = `<span>${escapeHtml(commandLabel(a.commandId))}</span><span>${a.distance.toFixed(3)}</span>`;
         ul.appendChild(li);
       }
       card.appendChild(ul);
     }
     if (r.commandId) {
-      const confirm = el("div", "row");
-      confirm.style.marginTop = "12px";
+      const rowc = el("div", "row");
+      rowc.style.marginTop = "14px";
       const yes = el("button", "btn") as HTMLButtonElement;
-      yes.textContent = "Bestätigen";
+      yes.textContent = "In Zwischenablage kopieren";
       yes.onclick = () => {
+        this.copyToClipboard(commandLabel(r.commandId!));
         this.lastResult = { ...r, status: "confirmed" };
         this.lastPreviewText = commandLabel(r.commandId!);
         this.renderView();
-        this.copyToClipboard(commandLabel(r.commandId!));
       };
       const no = el("button", "btn secondary") as HTMLButtonElement;
       no.textContent = "Verwerfen";
@@ -307,9 +483,9 @@ export class SilentTypeApp {
         this.lastPreviewText = "";
         this.renderView();
       };
-      confirm.appendChild(yes);
-      confirm.appendChild(no);
-      card.appendChild(confirm);
+      rowc.appendChild(yes);
+      rowc.appendChild(no);
+      card.appendChild(rowc);
     }
     return card;
   }
@@ -324,14 +500,12 @@ export class SilentTypeApp {
     this.renderView();
   }
 
-  private async recordAndRecognize(btn: HTMLButtonElement) {
-    btn.disabled = true;
-    btn.textContent = "Aufnahme… (3s)";
-    this.engine.startRecording();
-    await delay(3000);
-    const result = this.engine.stopRecording();
-    btn.textContent = "Aufnehmen & Erkennen";
-
+  private async recognize(result: RecordingResult) {
+    if (result.frames.length < 5) {
+      this.toast("Aufnahme zu kurz – bitte Start drücken, kurz die Lippen bewegen, dann Stopp.");
+      this.renderView();
+      return;
+    }
     const seq = smooth(extractFeatures(result.frames));
     const clf = await this.loadClassifier();
     if (clf.size === 0) {
@@ -374,22 +548,145 @@ export class SilentTypeApp {
 
   private renderTraining(): HTMLElement {
     this.ensureOrder();
-    const wrap = el("div");
+    const wrap = el("div", "stage-wrap");
+    const camActive = this.engine?.metrics.cameraActive ?? false;
+    const recording = this.engine?.metrics.recording ?? false;
+    const total = COMMANDS.length * TARGET_REPS;
+    const done = Object.values(this.counts).reduce(
+      (a, b) => a + Math.min(b, TARGET_REPS),
+      0,
+    );
+    const current = this.order[this.orderIndex];
 
-    // Speaker + session controls
-    const meta = el("div", "card");
-    meta.innerHTML = `<h3 style="margin-top:0">Sitzung</h3>`;
+    // Teleprompter: the command to mouth (or a green "saved" confirmation).
+    let prompterHtml: string;
+    if (this.flashSaved) {
+      prompterHtml = `<div class="p-label" style="color:var(--ok)">Gespeichert ✓</div>
+        <div class="p-big ok">${escapeHtml(this.flashSaved)}</div>
+        <div class="p-sub">Super – weiter mit dem nächsten Befehl…</div>`;
+    } else if (!current) {
+      prompterHtml = `<div class="p-label">Fertig</div>
+        <div class="p-big">Alles aufgenommen 🎉</div>
+        <div class="p-sub">Du kannst weitere Sitzungen aufnehmen oder zur Auswertung wechseln.</div>`;
+    } else {
+      const rep = Math.min((this.counts[current] ?? 0) + 1, TARGET_REPS);
+      prompterHtml = `<div class="p-label">Forme lautlos · Versuch ${rep} / ${TARGET_REPS}</div>
+        <div class="p-big">${escapeHtml(commandLabel(current))}</div>`;
+    }
+    const stageEl = this.cameraStage(prompterHtml);
+    if (this.flashSaved) stageEl.classList.add("saved");
+    wrap.appendChild(stageEl);
+    wrap.appendChild(this.autoToggle());
+
+    // Dock: progress · big record button · skip/camera.
+    const dock = el("div", "dock");
+    const left = el("div", "dock-side left");
+    left.textContent = recording
+      ? "läuft…"
+      : camActive && this.autoMode
+        ? "lausche…"
+        : `${done} / ${total}`;
+    const recBtn = this.recordButton(async () => {
+      if (!current) return;
+      if (!this.engine.metrics.recording) {
+        this.engine.startRecording();
+        this.renderView();
+      } else {
+        const res = this.engine.stopRecording();
+        await this.saveTrainingSample(current, res);
+      }
+    }, camActive && this.detectorReady && !!current);
+    const right = el("div", "dock-side right");
+    if (current && camActive && !recording) {
+      const skip = el("button", "btn small secondary") as HTMLButtonElement;
+      skip.textContent = "Überspringen";
+      skip.onclick = () => {
+        this.orderIndex++;
+        this.renderView();
+      };
+      right.appendChild(skip);
+    }
+    const camBtn = el("button", "btn small secondary") as HTMLButtonElement;
+    camBtn.textContent = camActive ? "Kamera aus" : "Kamera an";
+    camBtn.onclick = () => this.toggleCamera();
+    right.appendChild(camBtn);
+    dock.appendChild(left);
+    dock.appendChild(recBtn);
+    dock.appendChild(right);
+    wrap.appendChild(dock);
+
+    // Progress bar + tip.
+    const prog = el("div", "progress");
+    const span = el("span");
+    span.style.width = `${total ? (done / total) * 100 : 0}%`;
+    prog.appendChild(span);
+    wrap.appendChild(prog);
+
+    const tip = el("p", "muted");
+    tip.style.textAlign = "center";
+    tip.textContent = !camActive
+      ? "Erst Kamera einschalten."
+      : recording
+        ? "Forme den Befehl jetzt langsam & lautlos – beim Aufhören wird automatisch gespeichert."
+        : this.autoMode
+          ? "Hände frei: Befehl lautlos formen – Aufnahme startet & stoppt von selbst und speichert."
+          : "Großer Knopf: Start → Befehl lautlos mit den Lippen formen → Stopp speichert.";
+    wrap.appendChild(tip);
+
+    wrap.appendChild(this.commandChecklist(current));
+    wrap.appendChild(this.sessionPanel());
+    wrap.appendChild(this.dataCard());
+    wrap.appendChild(this.detailsPanel());
+    return wrap;
+  }
+
+  /** Visual progress: all 20 commands with a green check once enough reps exist. */
+  private commandChecklist(current: string | undefined): HTMLElement {
+    const card = el("div", "card");
+    const doneCount = COMMANDS.filter(
+      (c) => (this.counts[c.id] ?? 0) >= TARGET_REPS,
+    ).length;
+    const h = el("h3");
+    h.style.marginTop = "0";
+    h.textContent = `Dein Fortschritt — ${doneCount} / ${COMMANDS.length} Befehle fertig`;
+    card.appendChild(h);
+    const hint = el("p", "muted");
+    hint.style.marginTop = "0";
+    hint.textContent =
+      "Grüner Haken = genug Aufnahmen für diesen Befehl. Der blau umrandete ist gerade dran.";
+    card.appendChild(hint);
+    const grid = el("div", "checklist");
+    for (const c of COMMANDS) {
+      const n = this.counts[c.id] ?? 0;
+      const done = n >= TARGET_REPS;
+      const item = el(
+        "div",
+        "chk-item" + (done ? " done" : "") + (c.id === current ? " current" : ""),
+      );
+      item.innerHTML = `<span class="chk-mark">${done ? "✓" : "•"}</span><span>${escapeHtml(c.label)}</span><span class="chk-count">${Math.min(n, TARGET_REPS)}/${TARGET_REPS}</span>`;
+      grid.appendChild(item);
+    }
+    card.appendChild(grid);
+    return card;
+  }
+
+  /** Collapsible speaker/session settings. */
+  private sessionPanel(): HTMLElement {
+    const d = el("details", "panel");
+    const summary = el("summary");
+    summary.textContent = "Sitzung & Sprecher";
+    d.appendChild(summary);
+    const body = el("div");
+    body.style.paddingBottom = "14px";
     const row = el("div", "row");
-    const spk = el("input") as HTMLInputElement;
+    const spk = el("input", "field") as HTMLInputElement;
     spk.value = this.speaker;
     spk.placeholder = "Sprecher-Pseudonym";
-    spk.style.cssText =
-      "background:var(--surface);border:none;color:var(--text);padding:10px 12px;border-radius:10px;font-size:14px;";
     spk.onchange = () => {
       this.speaker = spk.value.trim() || "sprecher_1";
       localStorage.setItem("st_speaker", this.speaker);
     };
-    const newSession = el("button", "btn secondary") as HTMLButtonElement;
+    const newSession = el("button", "btn small secondary") as HTMLButtonElement;
     newSession.textContent = "Neue Sitzung";
     newSession.title = "Startet eine neue Session-ID (wichtig für faire Auswertung).";
     newSession.onclick = () => {
@@ -398,93 +695,22 @@ export class SilentTypeApp {
     };
     row.appendChild(spk);
     row.appendChild(newSession);
-    meta.appendChild(row);
-    const metaInfo = el("p", "muted");
-    metaInfo.textContent = `Gerät: ${this.device} · Session: ${this.sessionId.slice(0, 8)} · Ziel: ${TARGET_REPS}× pro Befehl`;
-    meta.appendChild(metaInfo);
-    wrap.appendChild(meta);
-
-    // Camera stage
-    const stage = el("div", "stage");
-    stage.appendChild(this.video);
-    stage.appendChild(this.canvas);
-    wrap.appendChild(stage);
-    wrap.appendChild(this.metricsCard());
-
-    // Assistant
-    const card = el("div", "card");
-    const total = COMMANDS.length * TARGET_REPS;
-    const done = Object.values(this.counts).reduce((a, b) => a + Math.min(b, TARGET_REPS), 0);
-    const current = this.order[this.orderIndex];
-
-    if (!current) {
-      card.innerHTML = `<h2>Alle Aufnahmen vollständig 🎉</h2>
-        <p class="muted">Du hast für jeden der 20 Befehle ${TARGET_REPS} Aufnahmen. Du kannst weitere Sitzungen aufnehmen (für faire Auswertung) oder zum Tab „Auswertung“ wechseln.</p>`;
-    } else {
-      const prompt = el("div", "prompt-command");
-      prompt.textContent = commandLabel(current);
-      const rep = (this.counts[current] ?? 0) + 1;
-      const sub = el("p", "muted");
-      sub.style.textAlign = "center";
-      sub.textContent = `Lautlos mit den Lippen formen · Versuch ${Math.min(rep, TARGET_REPS)} / ${TARGET_REPS}`;
-      card.appendChild(prompt);
-      card.appendChild(sub);
-
-      const prog = el("div", "progress");
-      const span = el("span");
-      span.style.width = `${(done / total) * 100}%`;
-      prog.appendChild(span);
-      card.appendChild(prog);
-      const progText = el("p", "muted");
-      progText.style.textAlign = "center";
-      progText.textContent = `${done} / ${total} Aufnahmen gesamt`;
-      card.appendChild(progText);
-
-      const recRow = el("div", "row");
-      recRow.style.justifyContent = "center";
-      const recBtn = el("button", "btn big") as HTMLButtonElement;
-      recBtn.textContent = this.engine?.metrics.cameraActive
-        ? "Aufnehmen (3s)"
-        : "Zuerst Kamera einschalten";
-      recBtn.disabled = !this.detectorReady;
-      recBtn.onclick = async () => {
-        if (!this.engine.metrics.cameraActive) {
-          await this.toggleCamera();
-          return;
-        }
-        await this.recordTrainingSample(current, recBtn);
-      };
-      recRow.appendChild(recBtn);
-      card.appendChild(recRow);
-
-      // Video consent (honest: not stored in the PoC).
-      const consent = el("label", "consent");
-      consent.innerHTML = `<input type="checkbox" disabled />
-        <span>Rohvideo zusätzlich speichern — <b>im PoC nicht implementiert</b>.
-        Es werden ausschließlich die Lippen-Messpunkte gespeichert, niemals ein Video.</span>`;
-      card.appendChild(consent);
-    }
-
-    wrap.appendChild(card);
-
-    // Data management
-    wrap.appendChild(this.dataCard());
-    return wrap;
+    body.appendChild(row);
+    const info = el("p", "muted");
+    info.textContent = `Gerät: ${this.device} · Session: ${this.sessionId.slice(0, 8)} · Ziel ${TARGET_REPS}× pro Befehl`;
+    body.appendChild(info);
+    const consent = el("p", "muted");
+    consent.innerHTML =
+      "Rohvideo wird <b>nie</b> gespeichert – ausschließlich die Lippen-Messpunkte.";
+    body.appendChild(consent);
+    d.appendChild(body);
+    return d;
   }
 
-  private async recordTrainingSample(commandId: string, btn: HTMLButtonElement) {
-    btn.disabled = true;
-    for (let s = 3; s >= 1; s--) {
-      btn.textContent = `Aufnahme… ${s}`;
-      this.engine.metrics.recording || this.engine.startRecording();
-      await delay(1000);
-    }
-    const res = this.engine.stopRecording();
-
+  private async saveTrainingSample(commandId: string, res: RecordingResult) {
     if (res.frames.length < 5 || res.meanQuality < 0.3) {
-      btn.disabled = false;
       this.toast(
-        `Aufnahme zu kurz oder schlechte Qualität (${(res.meanQuality * 100).toFixed(0)}%). Bitte wiederholen.`,
+        `Aufnahme zu kurz oder undeutlich (${(res.meanQuality * 100).toFixed(0)}%). Bitte wiederholen.`,
       );
       this.renderView();
       return;
@@ -506,17 +732,29 @@ export class SilentTypeApp {
     await saveRecording(rec);
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
     this.orderIndex++;
-    this.toast(`Gespeichert (Qualität ${(res.meanQuality * 100).toFixed(0)}%).`);
+    // Visible green confirmation, then advance to the next command.
+    this.flashSaved = commandLabel(commandId);
     this.renderView();
+    window.setTimeout(() => {
+      this.flashSaved = null;
+      this.renderView();
+    }, 1100);
   }
 
   private dataCard(): HTMLElement {
     const card = el("div", "card");
-    card.innerHTML = `<h3 style="margin-top:0">Daten</h3>`;
-    const counts = el("p", "muted");
     const totalRecs = Object.values(this.counts).reduce((a, b) => a + b, 0);
-    counts.textContent = `${totalRecs} Aufnahmen auf diesem Gerät gespeichert (nur lokal, nichts hochgeladen).`;
-    card.appendChild(counts);
+    card.innerHTML = `<h3 style="margin-top:0">Deine Daten (${totalRecs} Aufnahmen)</h3>
+      <p class="muted">
+        <b>Wie lernt die App?</b> Jede neue Aufnahme vergleicht sie mit deinen gespeicherten
+        Beispielen und wählt den ähnlichsten Befehl. <b>Je mehr du pro Befehl aufnimmst
+        (Ziel 10×), desto besser</b> – ein extra „Trainieren“ oder Exportieren ist dafür nicht nötig.<br/>
+        <b>Wo?</b> Nur im Speicher dieses Browsers auf diesem Gerät (Technik: „IndexedDB“).
+        Nichts wird ins Internet geladen.<br/>
+        <b>Was pro Aufnahme?</b> Befehl, Zeitpunkt, Gerät – und die Lippen-Messpunkte
+        über die Zeit (die Zahlen, die du oben live siehst). <b>Kein Video, kein Ton.</b><br/>
+        <b>Export?</b> Nur ein Backup zum Mitnehmen/Analysieren – zum Lernen nicht erforderlich.
+      </p>`;
     const row = el("div", "row");
     const jsonBtn = el("button", "btn secondary") as HTMLButtonElement;
     jsonBtn.textContent = "Export JSON";
@@ -635,38 +873,12 @@ export class SilentTypeApp {
       <p class="muted">Kamera standardmäßig aus, nur nach deinem Klick aktiv, Aktivität oben sichtbar.
       Es werden ausschließlich Lippen-Messpunkte gespeichert, niemals ein Video.</p>
     `;
+    const howBtn = el("button", "btn secondary") as HTMLButtonElement;
+    howBtn.textContent = "So geht's (Anleitung zeigen)";
+    howBtn.onclick = () => this.showIntro();
+    card.appendChild(howBtn);
     wrap.appendChild(card);
     return wrap;
-  }
-
-  // ------------------------------------------------------------ mode sheet ---
-  private onFab() {
-    this.modeSheetOpen = !this.modeSheetOpen;
-    this.renderModeSheet();
-  }
-
-  private renderModeSheet() {
-    const existing = this.root.querySelector(".mode-sheet");
-    existing?.remove();
-    const fab = this.root.querySelector("#fab");
-    fab?.classList.toggle("recording", this.engine?.metrics.recording ?? false);
-    if (!this.modeSheetOpen || this.view !== "input") return;
-
-    const sheet = el("div", "mode-sheet");
-    const silent = el("button") as HTMLButtonElement;
-    silent.innerHTML = `👁️‍🗨️ <span>Lautlos (Lippen)</span>`;
-    silent.onclick = () => {
-      this.mode = "silent";
-      this.modeSheetOpen = false;
-      this.updateStatusBar();
-      this.renderModeSheet();
-    };
-    const voice = el("button") as HTMLButtonElement;
-    voice.disabled = true;
-    voice.innerHTML = `🎤 <span>Sprache</span><span class="hint">nicht implementiert</span>`;
-    sheet.appendChild(silent);
-    sheet.appendChild(voice);
-    this.root.appendChild(sheet);
   }
 
   // --------------------------------------------------------------- utils -----
