@@ -47,7 +47,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v7 · 1× pro Befehl";
+const BUILD = "v8 · ruhiger Start";
 
 /** Styled wordmark with the "U" as a small accent mark. */
 function brandHtml(): string {
@@ -419,11 +419,16 @@ export class SilentTypeApp {
   private async runChallenge() {
     const c = this.challenge;
     if (!c || c.running) return;
-    if (!this.engine?.metrics.cameraActive) {
-      await this.toggleCamera();
-      return;
-    }
     if (!this.detectorReady) return;
+    if (!this.engine.metrics.cameraActive) {
+      try {
+        await this.engine.startCamera();
+      } catch {
+        this.toast("Kamera-Zugriff nötig – bitte erlauben.");
+        return;
+      }
+    }
+    if (this.challenge !== c) return;
     c.running = true;
     this.renderView();
 
@@ -439,7 +444,7 @@ export class SilentTypeApp {
       }
       await this.challengeCountdown(c);
       if (!this.challengeAlive(c)) break;
-      const res = await this.challengeRecordWindow(c, 2500);
+      const res = await this.challengeRecordWindow(c, 3000);
       if (!this.challengeAlive(c)) break;
       if (res.frames.length >= 3) {
         await this.saveChallengeRecording(cmd, res);
@@ -462,7 +467,7 @@ export class SilentTypeApp {
       const target = c.testQueue[c.testIdx];
       await this.challengeCountdown(c);
       if (!this.challengeAlive(c)) break;
-      const res = await this.challengeRecordWindow(c, 2500);
+      const res = await this.challengeRecordWindow(c, 3000);
       if (!this.challengeAlive(c)) break;
       let understood: string | null = null;
       if (res.frames.length >= 3) {
@@ -494,12 +499,15 @@ export class SilentTypeApp {
 
   private async challengeCountdown(c: ChallengeState) {
     c.stage = "cue";
-    const steps = ["Gleich…", "3", "2", "1"];
-    for (const s of steps) {
+    // Calm "get ready" beat, then a slower 3-2-1 with a big centered number.
+    c.cueText = "ready";
+    this.renderView();
+    await delay(1100);
+    for (const n of ["3", "2", "1"]) {
       if (!this.challengeAlive(c)) return;
-      c.cueText = s;
+      c.cueText = n;
       this.renderView();
-      await delay(s === "Gleich…" ? 650 : 520);
+      await delay(1000);
     }
   }
 
@@ -627,6 +635,34 @@ export class SilentTypeApp {
     head.appendChild(right);
     wrap.appendChild(head);
 
+    // Pre-start / paused: a calm screen WITHOUT the camera. Camera turns on at start.
+    if (!c.running) {
+      const trained = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
+      const started = trained > 0 || c.testIdx > 0;
+      const ready = el("div", "card");
+      ready.innerHTML = `
+        <h2 class="brand-lg" style="font-size:26px;margin-bottom:6px">${started ? "Kurze Pause" : "Bereit?"}</h2>
+        <p class="muted">${
+          c.phase === "train"
+            ? `Gleich formst du <b>${c.commands.length} kurze Befehle</b> – jeden nur einmal, <b>lautlos</b> mit den Lippen. Vor jeder Aufnahme zähle ich in Ruhe runter (3 · 2 · 1). Kein Ton, kein Druck. Die Kamera geht erst beim Start an.`
+            : `Jetzt die <b>Rate-Runde</b>: Ich zeige dir die Befehle, du formst sie lautlos – und ich rate, welcher es war.`
+        }</p>`;
+      wrap.appendChild(ready);
+      const go = el("button", "btn big") as HTMLButtonElement;
+      go.style.width = "100%";
+      go.textContent = started ? "Weiter ▶" : "Los geht's ▶";
+      go.disabled = !this.detectorReady;
+      go.onclick = () => this.runChallenge();
+      wrap.appendChild(go);
+      if (!this.detectorReady) {
+        const w = el("p", "muted");
+        w.style.textAlign = "center";
+        w.textContent = "Erkennungs-Modell lädt noch…";
+        wrap.appendChild(w);
+      }
+      return wrap;
+    }
+
     const camActive = this.engine?.metrics.cameraActive ?? false;
     const trainCmd = c.phase === "train" ? this.challengeTrainCmd() : null;
     const target = c.phase === "test" ? c.testQueue[c.testIdx] : null;
@@ -655,9 +691,14 @@ export class SilentTypeApp {
       prompterHtml = `<div class="p-label" style="color:#ff6b61">● ${escapeHtml(c.cueText)}</div>
         <div class="p-big">${escapeHtml(label)}</div>`;
     } else if (c.stage === "cue") {
-      prompterHtml = `<div class="p-label">${c.phase === "train" ? "Gleich lautlos formen" : "Rate-Runde · gleich formen"}</div>
-        <div class="p-big">${escapeHtml(label)}</div>
-        <div class="p-sub" style="font-size:22px;font-weight:700;color:#fff">${escapeHtml(c.cueText)}</div>`;
+      if (c.cueText === "ready") {
+        prompterHtml = `<div class="p-label">${c.phase === "train" ? "Gleich lautlos formen" : "Rate-Runde · gleich formen"}</div>
+          <div class="p-big">${escapeHtml(label)}</div>
+          <div class="p-sub">Mach dich bereit…</div>`;
+      } else {
+        prompterHtml = `<div class="p-label">${escapeHtml(label)}</div>
+          <div class="p-big" style="font-size:88px;line-height:1.05">${escapeHtml(c.cueText)}</div>`;
+      }
     } else {
       prompterHtml = `<div class="p-label">${c.phase === "train" ? "Üben" : "Rate-Runde"}</div>
         <div class="p-big">${escapeHtml(label)}</div>
@@ -679,28 +720,17 @@ export class SilentTypeApp {
       wrap.appendChild(dots);
     }
 
-    // One button: start the guided run, or stop it.
-    const mainBtn = el("button", "btn big") as HTMLButtonElement;
-    mainBtn.style.width = "100%";
-    if (c.running) {
-      mainBtn.className = "btn big secondary";
-      mainBtn.textContent = "⏸ Stopp";
-      mainBtn.onclick = () => this.stopChallengeRun();
-    } else if (!camActive) {
-      mainBtn.textContent = "Kamera einschalten";
-      mainBtn.onclick = () => this.toggleCamera();
-    } else {
-      mainBtn.textContent = "Los geht's ▶";
-      mainBtn.disabled = !this.detectorReady;
-      mainBtn.onclick = () => this.runChallenge();
-    }
-    wrap.appendChild(mainBtn);
+    // While running there is only one control: stop.
+    const stopBtn = el("button", "btn big secondary") as HTMLButtonElement;
+    stopBtn.style.width = "100%";
+    stopBtn.textContent = "⏸ Stopp";
+    stopBtn.onclick = () => this.stopChallengeRun();
+    wrap.appendChild(stopBtn);
 
     const tip = el("p", "muted");
     tip.style.textAlign = "center";
-    tip.textContent = c.running
-      ? "Folge den Ansagen – forme jeden Befehl lautlos, sobald „Jetzt!“ erscheint. (Stopp jederzeit möglich.)"
-      : "Einmal starten – die App führt dich automatisch durch alle Aufnahmen, ganz ohne mehrfaches Tippen.";
+    tip.textContent =
+      "Folge den Ansagen – forme den Befehl lautlos, sobald die Aufnahme läuft. (Stopp jederzeit möglich.)";
     wrap.appendChild(tip);
     return wrap;
   }
