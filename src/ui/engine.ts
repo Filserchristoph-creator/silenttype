@@ -196,8 +196,8 @@ export class CaptureEngine {
     this.metrics.motion = this.motionEwma;
     if (!this.autoSegment) return;
 
-    const startTh = Math.max(this.noiseFloor * 3.5, 0.010);
-    const stopTh = Math.max(this.noiseFloor * 2.0, 0.006);
+    const startTh = Math.max(this.noiseFloor * 2.4, 0.006);
+    const stopTh = Math.max(this.noiseFloor * 1.5, 0.0035);
 
     if (!this.metrics.recording) {
       // Learn the resting noise level while idle.

@@ -44,6 +44,8 @@ interface ChallengeState {
 // Visible product branding (the URL/repo stays "silenttype").
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
+// Bump on each deploy so the version is visible (helps spot browser caching).
+const BUILD = "v5 · Tap-Challenge";
 
 /** Styled wordmark with the "U" as a small accent mark. */
 function brandHtml(): string {
@@ -209,10 +211,11 @@ export class SilentTypeApp {
   private renderView() {
     // Hands-free is armed in the camera views and always during a challenge.
     if (this.engine)
+      // In the challenge we use reliable tap-to-record, so hands-free is off there.
       this.engine.autoSegment =
-        this.view === "challenge"
-          ? !(this.challenge?.busy ?? false)
-          : this.autoMode && (this.view === "input" || this.view === "training");
+        this.view !== "challenge" &&
+        this.autoMode &&
+        (this.view === "input" || this.view === "training");
     // Hide the tab bar during the focused challenge.
     const nav = this.root.querySelector(".nav") as HTMLElement | null;
     if (nav) nav.style.display = this.view === "challenge" ? "none" : "inline-flex";
@@ -341,7 +344,8 @@ export class SilentTypeApp {
     const camActive = this.engine?.metrics.cameraActive ?? false;
     const btn = el("button", "record-btn") as HTMLButtonElement;
     if (recording) btn.classList.add("recording");
-    else if (this.autoMode && camActive) btn.classList.add("listening");
+    else if (this.autoMode && camActive && this.view !== "challenge")
+      btn.classList.add("listening");
     btn.disabled = !enabled;
     btn.title = recording ? "Stopp" : "Aufnahme starten";
     btn.innerHTML = `<span class="inner"></span>`;
@@ -439,23 +443,45 @@ export class SilentTypeApp {
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
   }
 
+  /** Reliable tap-to-record: tap → record a fixed ~2.5 s window → save → advance. */
+  private async challengeRecordTap() {
+    const c = this.challenge;
+    if (!c || c.busy || !this.engine?.metrics.cameraActive || !this.detectorReady) return;
+    c.busy = true;
+    this.engine.startRecording();
+    this.renderView();
+    await delay(2600);
+    const res = this.engine.stopRecording();
+    await this.processChallengeRec(res);
+  }
+
+  /** Hands-free path (optional fallback). */
   private async challengeStop(res: RecordingResult) {
     const c = this.challenge;
     if (!c || c.busy) return;
-    if (res.frames.length < 5 || res.meanQuality < 0.3) {
-      this.toast("Zu kurz – bitte etwas deutlicher formen.");
+    c.busy = true;
+    this.renderView();
+    await this.processChallengeRec(res);
+  }
+
+  private async processChallengeRec(res: RecordingResult) {
+    const c = this.challenge;
+    if (!c) return;
+    // Very tolerant: only reject when essentially no face was seen at all.
+    if (res.frames.length < 3) {
+      this.toast("Kein Gesicht erkannt – näher an die Kamera / mehr Licht, dann nochmal tippen.");
+      c.busy = false;
       this.renderView();
       return;
     }
-    c.busy = true;
-    this.renderView(); // disarm hands-free while we process
 
     if (c.phase === "train") {
       const cmd = this.challengeTrainCmd();
       if (cmd) {
         await this.saveChallengeRecording(cmd, res);
         c.trainCounts[cmd] = (c.trainCounts[cmd] ?? 0) + 1;
-        this.toast("✓ Gespeichert");
+        const done = Object.values(c.trainCounts).reduce((a, b) => a + b, 0);
+        this.toast(`✓ Gespeichert (${done} / ${c.commands.length * c.reps})`);
         if (!this.challengeTrainCmd()) {
           c.testQueue = [...c.commands];
           shuffle(c.testQueue);
@@ -475,7 +501,7 @@ export class SilentTypeApp {
       c.results.push(correct);
       if (correct) c.score++;
       c.testIdx++;
-      this.renderView(); // show the reveal (busy stays true → hands-free off)
+      this.renderView(); // show the reveal
       window.setTimeout(() => {
         const cc = this.challenge;
         if (!cc) return;
@@ -599,20 +625,19 @@ export class SilentTypeApp {
       wrap.appendChild(dots);
     }
 
-    // Dock with the big record button (manual fallback; hands-free also works).
+    // Dock with the big TAP-to-record button (reliable: tap → ~2.5 s → saved).
     const camActive = this.engine?.metrics.cameraActive ?? false;
     const dock = el("div", "dock");
     const dleft = el("div", "dock-side left");
-    dleft.textContent = camActive ? (c.busy ? "…" : "lausche…") : "Kamera aus";
-    const recBtn = this.recordButton(async () => {
-      if (!this.engine.metrics.recording) {
-        this.engine.startRecording();
-        this.renderView();
-      } else {
-        const res = this.engine.stopRecording();
-        await this.challengeStop(res);
-      }
-    }, camActive && this.detectorReady && !c.busy);
+    dleft.textContent = !camActive
+      ? "Kamera aus"
+      : c.busy
+        ? "Aufnahme…"
+        : "Tippen & formen";
+    const recBtn = this.recordButton(
+      () => this.challengeRecordTap(),
+      camActive && this.detectorReady && !c.busy,
+    );
     const dright = el("div", "dock-side right");
     dock.appendChild(dleft);
     dock.appendChild(recBtn);
@@ -623,7 +648,9 @@ export class SilentTypeApp {
     tip.style.textAlign = "center";
     tip.textContent = !camActive
       ? "Kamera einschalten, dann geht's los."
-      : "Einfach lautlos formen – Start & Stopp passieren automatisch.";
+      : c.busy
+        ? "Forme den Befehl jetzt lautlos – wird gleich gespeichert…"
+        : "Großen Knopf tippen, Befehl lautlos formen – nach ~2,5 s ist er gespeichert.";
     wrap.appendChild(tip);
     return wrap;
   }
@@ -673,7 +700,8 @@ export class SilentTypeApp {
           : this.detectorSource === "error"
             ? "Fehler beim Laden"
             : "Google-CDN"
-      }. Die Lippen-Balken oben zeigen live, was aufgezeichnet wird.</p>`;
+      }. Die Lippen-Balken oben zeigen live, was aufgezeichnet wird.</p>
+      <p class="muted" style="padding-bottom:12px">Version: <b>${BUILD}</b></p>`;
     return d;
   }
 
@@ -820,8 +848,8 @@ export class SilentTypeApp {
   }
 
   private async recognize(result: RecordingResult) {
-    if (result.frames.length < 5) {
-      this.toast("Aufnahme zu kurz – bitte Start drücken, kurz die Lippen bewegen, dann Stopp.");
+    if (result.frames.length < 3) {
+      this.toast("Zu kurz – bitte etwas länger lautlos formen.");
       this.renderView();
       return;
     }
@@ -1027,9 +1055,9 @@ export class SilentTypeApp {
   }
 
   private async saveTrainingSample(commandId: string, res: RecordingResult) {
-    if (res.frames.length < 5 || res.meanQuality < 0.3) {
+    if (res.frames.length < 3 || res.meanQuality < 0.15) {
       this.toast(
-        `Aufnahme zu kurz oder undeutlich (${(res.meanQuality * 100).toFixed(0)}%). Bitte wiederholen.`,
+        `Kein klares Gesicht erkannt (${(res.meanQuality * 100).toFixed(0)}%). Näher ran / mehr Licht, dann nochmal.`,
       );
       this.renderView();
       return;
@@ -1197,6 +1225,10 @@ export class SilentTypeApp {
     howBtn.textContent = "So geht's (Anleitung zeigen)";
     howBtn.onclick = () => this.showIntro();
     card.appendChild(howBtn);
+    const ver = el("p", "muted");
+    ver.style.marginBottom = "0";
+    ver.textContent = `Version: ${BUILD}`;
+    card.appendChild(ver);
     wrap.appendChild(card);
     return wrap;
   }
