@@ -48,11 +48,16 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v10 · Geführte Tour";
+const BUILD = "v11 · Logo & System-Look";
 
-/** Styled wordmark with the "U" as a small accent mark. */
+/** The "half eye, half lip" logo mark (inherits currentColor). */
+function logoSvg(): string {
+  return `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 23 Q24 8 42 23"/><path d="M13 31 Q18.5 28 24 31 Q29.5 28 35 31"/><path d="M13 31 Q24 39 35 31"/><circle cx="24" cy="21" r="4.4" fill="currentColor" stroke="none"/></svg>`;
+}
+
+/** Logo + wordmark; the "U" is a quiet accent. */
 function brandHtml(): string {
-  return `understand <span class="u">U</span>`;
+  return `<span class="brand-logo">${logoSvg()}</span><span class="brand-name">understand <span class="u">U</span></span>`;
 }
 
 // Curated for different lengths/shapes → easier to tell apart on a first try.
@@ -262,6 +267,9 @@ export class SilentTypeApp {
   private onMetrics(m: LiveMetrics) {
     const dot = this.root.querySelector("#cam-dot");
     dot?.classList.toggle("on", m.cameraActive);
+    this.root
+      .querySelector(".statusbar .brand-logo")
+      ?.classList.toggle("active", m.cameraActive);
     const fps = this.root.querySelector("#m-fps");
     if (fps) fps.textContent = String(m.fps);
     const q = this.root.querySelector("#m-q");
@@ -330,8 +338,10 @@ export class SilentTypeApp {
         pill.style.display = "none";
       }
     }
+    const active = this.engine?.metrics.cameraActive ?? false;
     const dot = this.root.querySelector("#cam-dot");
-    dot?.classList.toggle("on", this.engine?.metrics.cameraActive ?? false);
+    dot?.classList.toggle("on", active);
+    this.root.querySelector(".statusbar .brand-logo")?.classList.toggle("active", active);
   }
 
   // ------------------------------------------------------- shared stage ------

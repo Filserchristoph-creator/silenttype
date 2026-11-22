@@ -1,21 +1,21 @@
 /* SilentType — camera/teleprompter-style UI. Dark, cinematic, responsive. */
 :root {
-  --bg: #f5f1ea;          /* warm cream */
+  --bg: #f7f7f8;          /* clean near-white */
   --bg-2: #ffffff;        /* cards */
-  --surface: #efe9df;     /* warm light surface */
-  --surface-2: #e5ddcf;   /* slightly deeper */
-  --line: rgba(60, 48, 32, 0.12);
-  --text: #2b2a27;        /* warm near-black */
-  --text-dim: #7c766b;    /* warm grey */
-  --accent: #0f766e;      /* trustworthy deep teal */
-  --accent-soft: #e3f1ef; /* teal tint for backgrounds */
-  --ok: #1f9d6b;
-  --warn: #c0851c;
-  --bad: #d35045;
-  --radius: 20px;
-  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Segoe UI", system-ui, sans-serif;
+  --surface: #eeeef1;
+  --surface-2: #e3e3e8;
+  --line: rgba(20, 20, 35, 0.10);
+  --text: #18181b;        /* near-black */
+  --text-dim: #6b6b76;
+  --accent: #4f46e5;      /* confident indigo */
+  --accent-soft: #ecebfb;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --radius: 18px;
+  --font-display: "Inter", -apple-system, system-ui, sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -23,8 +23,7 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background:
-    radial-gradient(1100px 680px at 50% -8%, #fcf9f3 0%, var(--bg) 62%);
+  background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
@@ -53,12 +52,7 @@ button { font-family: inherit; }
   top: 0;
   z-index: 30;
 }
-.statusbar .brand {
-  font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  font-size: 19px;
-}
+.statusbar .brand { font-size: 18px; }
 .statusbar .dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-dim);
@@ -106,31 +100,38 @@ button { font-family: inherit; }
   padding: 8px 18px; border-radius: 999px; font-size: 13.5px; font-weight: 550;
   cursor: pointer; transition: background .15s, color .15s;
 }
-.nav button.active { background: #fff; color: var(--accent); box-shadow: 0 1px 3px rgba(40,30,15,0.12); }
+.nav button.active { background: #fff; color: var(--accent); box-shadow: 0 1px 3px rgba(20,20,35,0.12); }
 
 .card {
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 20px;
-  box-shadow: 0 2px 12px -5px rgba(40, 30, 15, 0.08);
+  box-shadow: 0 2px 12px -5px rgba(20, 20, 35, 0.08);
 }
 .muted { color: var(--text-dim); font-size: 13.5px; line-height: 1.62; }
 h2 { font-family: var(--font-display); font-weight: 600; font-size: 25px; letter-spacing: -0.01em; margin: 0 0 8px; }
 h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 18px 0 8px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
-/* Elegant wordmark: the "U" as a quiet accent mark. */
-.brand {
-  font-family: var(--font-display); font-weight: 600; font-size: 20px;
-  letter-spacing: -0.01em;
+/* Wordmark with the eye-lip logo; the "U" is a quiet accent. */
+.brand { display: inline-flex; align-items: center; gap: 9px; }
+.brand-name {
+  font-family: var(--font-display); font-weight: 700; letter-spacing: -0.02em;
 }
 .brand .u, .brand-lg .u { color: var(--accent); }
-.brand-lg {
-  font-family: var(--font-display); font-weight: 600; font-size: 34px;
-  letter-spacing: -0.015em; margin: 0 0 4px;
+.brand-logo {
+  display: inline-flex; color: var(--text);
+  transition: color .25s ease, filter .25s ease;
 }
-.prompter .p-big { font-family: var(--font-display); font-weight: 600; }
+.brand-logo svg { width: 1.25em; height: 1.25em; display: block; }
+.brand-logo.active { color: var(--accent); filter: drop-shadow(0 0 7px rgba(79,70,229,0.5)); }
+.brand-lg {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-weight: 800; font-size: 32px;
+  letter-spacing: -0.025em; margin: 0 0 4px;
+}
+.prompter .p-big { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.01em; }
 .big-score { font-family: var(--font-display); }
 
 /* ---------- Camera stage (the hero) ---------- */
@@ -142,7 +143,7 @@ h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 18px 0 
   background: #10131a;
   border-radius: 24px;
   overflow: hidden;
-  box-shadow: 0 24px 60px -28px rgba(40, 30, 15, 0.45);
+  box-shadow: 0 24px 60px -28px rgba(20, 20, 35, 0.45);
 }
 /* Text inside the dark camera viewport must stay light. */
 .prompter .p-big { color: #fff; }
