@@ -56,7 +56,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v24 · schlicht + Delight";
+const BUILD = "v25 · Teilen";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -1034,23 +1034,19 @@ export class SilentTypeApp {
       for (const hit of c.results) dots.appendChild(el("span", "d " + (hit ? "hit" : "miss")));
       card.appendChild(dots);
       wrap.appendChild(card);
+      // The wow moment → the viral share is the hero action here.
+      const share = this.shareButton("🚀 Das muss jeder sehen – weiterschicken", "btn big");
+      share.style.width = "100%";
+      wrap.appendChild(share);
       const row = el("div", "row");
       row.style.justifyContent = "center";
-      const again = el("button", "btn big") as HTMLButtonElement;
+      const again = el("button", "btn secondary") as HTMLButtonElement;
       again.textContent = "Nochmal 🎯";
       again.onclick = () => this.startChallenge();
-      const more = el("button", "btn secondary") as HTMLButtonElement;
-      more.textContent = "Mehr Befehle üben";
-      more.onclick = () => {
-        this.challenge = null;
-        this.view = "training";
-        this.renderView();
-      };
       const fin = el("button", "btn ghost") as HTMLButtonElement;
       fin.textContent = "Fertig";
       fin.onclick = () => this.endChallenge();
       row.appendChild(again);
-      row.appendChild(more);
       row.appendChild(fin);
       wrap.appendChild(row);
       return wrap;
@@ -1872,6 +1868,10 @@ export class SilentTypeApp {
     cta.onclick = () => this.startJourney();
     wrap.appendChild(cta);
 
+    const share = this.shareButton("Weiterschicken 🚀", "btn ghost");
+    share.style.width = "100%";
+    wrap.appendChild(share);
+
     const note = el("p", "muted");
     note.style.cssText = "text-align:center;font-size:12px";
     note.textContent =
@@ -1959,6 +1959,32 @@ export class SilentTypeApp {
       () => this.toast("In die Zwischenablage kopiert."),
       () => {},
     );
+  }
+
+  /** Viral sharing: native share sheet on mobile, clipboard fallback. */
+  private async shareApp() {
+    const url = "https://filserchristoph-creator.github.io/silenttype/";
+    const text = `${APP_NAME} – ${APP_TAGLINE}. Sprich mit deinem Handy, ganz ohne Worte. Probier's:`;
+    try {
+      const nav = navigator as Navigator & {
+        share?: (d: { title?: string; text?: string; url?: string }) => Promise<void>;
+      };
+      if (nav.share) {
+        await nav.share({ title: APP_NAME, text, url });
+      } else {
+        await navigator.clipboard?.writeText(url);
+        this.toast("Link kopiert – schick ihn weiter! 🚀");
+      }
+    } catch {
+      /* user cancelled the share sheet */
+    }
+  }
+
+  private shareButton(label = "Weiterschicken 🚀", cls = "btn secondary"): HTMLButtonElement {
+    const b = el("button", cls) as HTMLButtonElement;
+    b.textContent = label;
+    b.onclick = () => this.shareApp();
+    return b;
   }
 
   private toast(msg: string) {
