@@ -56,7 +56,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v23 · aufgeräumt";
+const BUILD = "v24 · schlicht + Delight";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -918,13 +918,27 @@ export class SilentTypeApp {
     if (res.frames.length >= 3) {
       const r = clf.predict(extractFeatures(res.frames));
       if (r.commandId) {
-        kb.text = (kb.text ? kb.text + " " : "") + commandLabel(r.commandId);
-        this.toast("✓ eingefügt");
-      } else {
-        this.toast("Nicht sicher verstanden – nochmal tippen & lautlos formen.");
+        this.renderView();
+        await this.typeIntoComposer(kb, commandLabel(r.commandId));
+        return;
       }
+      this.toast("Nicht sicher verstanden – nochmal tippen & lautlos formen.");
     } else {
       this.toast("Kein Gesicht erkannt – näher ran / mehr Licht.");
+    }
+    this.renderView();
+  }
+
+  /** Delight: "type" the recognized text in character by character. */
+  private async typeIntoComposer(kb: { text: string }, label: string) {
+    const start = kb.text;
+    const add = (start ? " " : "") + label;
+    const field = this.root.querySelector(".kb-text") as HTMLElement | null;
+    for (let i = 1; i <= add.length; i++) {
+      if (this.kb !== kb) return;
+      kb.text = start + add.slice(0, i);
+      if (field) field.textContent = kb.text;
+      await delay(30);
     }
     this.renderView();
   }
@@ -1222,7 +1236,42 @@ export class SilentTypeApp {
   }
 
   // --------------------------------------------------------------- input -----
+  /** Clean, ChatGPT-simple launcher for testers; the raw view is Profi-only. */
   private renderInput(): HTMLElement {
+    if (this.devMode) return this.renderRawInput();
+    const wrap = el("div", "stage-wrap");
+
+    wrap.appendChild(this.learnedBadge());
+
+    const tour = el("button", "btn big") as HTMLButtonElement;
+    tour.textContent = "✨ Probier's selbst";
+    tour.style.width = "100%";
+    tour.onclick = () => this.startJourney();
+    wrap.appendChild(tour);
+
+    const kb = el("button", "btn secondary") as HTMLButtonElement;
+    kb.textContent = "⌨️ Nachricht schreiben (lautlos)";
+    kb.style.width = "100%";
+    kb.onclick = () => this.startKeyboard();
+    wrap.appendChild(kb);
+
+    const hint = el("p", "muted");
+    hint.style.textAlign = "center";
+    hint.textContent = "Tippe „Probier's selbst“ – ich führe dich in 2 Minuten durch.";
+    wrap.appendChild(hint);
+
+    const footer = el("p", "muted");
+    footer.style.cssText = "text-align:center;font-size:12px;margin-top:4px";
+    const legalLink = el("button", "btn ghost small") as HTMLButtonElement;
+    legalLink.textContent = "Datenschutz & Impressum";
+    legalLink.style.fontSize = "12px";
+    legalLink.onclick = () => this.switchView("about");
+    footer.appendChild(legalLink);
+    wrap.appendChild(footer);
+    return wrap;
+  }
+
+  private renderRawInput(): HTMLElement {
     const wrap = el("div", "stage-wrap");
     const camActive = this.engine?.metrics.cameraActive ?? false;
     const recording = this.engine?.metrics.recording ?? false;
@@ -1451,7 +1500,7 @@ export class SilentTypeApp {
     badge.innerHTML =
       n > 0
         ? `🧠 Deine App hat aus <b>${n}</b> ${n === 1 ? "Beispiel" : "Beispielen"} von dir gelernt — lokal auf diesem Gerät gespeichert.`
-        : `🧠 Noch nichts gelernt. Mach einmal die <b>Geführte Tour</b> oben, dann versteht sie dich.`;
+        : `🧠 Noch nichts gelernt. Tipp auf <b>„Probier's selbst“</b> – danach versteht sie dich.`;
     return badge;
   }
 
