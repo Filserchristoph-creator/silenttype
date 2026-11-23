@@ -23,7 +23,6 @@ import type {
   InputMode,
   LandmarkFrame,
   Recording,
-  RecognitionStatus,
 } from "../core/types.ts";
 
 type View =
@@ -57,7 +56,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v22 · Vision + Sofort-Wow";
+const BUILD = "v23 · aufgeräumt";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -93,12 +92,6 @@ interface MouthProfile {
 
 const TARGET_REPS = 10; // per command → 200 total for one speaker
 
-const STATUS_LABEL: Record<RecognitionStatus, string> = {
-  not_recognized: "Nicht erkannt",
-  uncertain: "Unsicher",
-  probable: "Wahrscheinlich",
-  confirmed: "Bestätigt",
-};
 
 export class SilentTypeApp {
   private root: HTMLElement;
@@ -119,7 +112,6 @@ export class SilentTypeApp {
   private detectorReady = false;
   private detectorSource = "";
   private lastResult: ClassificationResult | null = null;
-  private lastPreviewText = "";
 
   // Training state
   private speaker = localStorage.getItem("st_speaker") || "sprecher_1";
@@ -202,10 +194,8 @@ export class SilentTypeApp {
     const bar = el("div", "statusbar");
     bar.innerHTML = `
       <span class="brand">${brandHtml()}</span>
-      <span class="dot" id="cam-dot" title="Kamera"></span>
+      <span style="flex:1"></span>
       <span class="chip" id="mode-chip">Lautlos</span>
-      <span class="preview" id="preview-text"></span>
-      <span class="status-pill status-not_recognized" id="status-pill" style="display:none"></span>
     `;
 
     const main = el("div", "main");
@@ -294,8 +284,6 @@ export class SilentTypeApp {
 
   // --------------------------------------------------------------- status ----
   private onMetrics(m: LiveMetrics) {
-    const dot = this.root.querySelector("#cam-dot");
-    dot?.classList.toggle("on", m.cameraActive);
     this.root
       .querySelector(".statusbar .brand-logo")
       ?.classList.toggle("active", m.cameraActive);
@@ -355,21 +343,7 @@ export class SilentTypeApp {
   private updateStatusBar() {
     const chip = this.root.querySelector("#mode-chip");
     if (chip) chip.textContent = this.mode === "silent" ? "Lautlos" : "Sprache";
-    const preview = this.root.querySelector("#preview-text");
-    if (preview) preview.textContent = this.lastPreviewText;
-    const pill = this.root.querySelector("#status-pill") as HTMLElement;
-    if (pill) {
-      if (this.lastResult) {
-        pill.style.display = "inline-block";
-        pill.className = "status-pill status-" + this.lastResult.status;
-        pill.textContent = STATUS_LABEL[this.lastResult.status];
-      } else {
-        pill.style.display = "none";
-      }
-    }
     const active = this.engine?.metrics.cameraActive ?? false;
-    const dot = this.root.querySelector("#cam-dot");
-    dot?.classList.toggle("on", active);
     this.root.querySelector(".statusbar .brand-logo")?.classList.toggle("active", active);
   }
 
@@ -1284,14 +1258,20 @@ export class SilentTypeApp {
     let prompterHtml: string;
     if (this.lastResult?.commandId) {
       const st = this.lastResult.status;
-      const cls = st === "uncertain" ? "warn" : "ok";
-      prompterHtml = `<div class="p-label">Verstanden · ${STATUS_LABEL[st]}</div>
+      const uncertain = st === "uncertain";
+      const cls = uncertain ? "warn" : "ok";
+      const sub = this.devMode
+        ? `Sicherheit ${(this.lastResult.confidence * 100).toFixed(0)} % (unkalibriert) · ${this.lastResult.processingMs.toFixed(0)} ms`
+        : uncertain
+          ? "Nicht ganz sicher – stimmt das?"
+          : "Stimmt's? Sonst einfach nochmal.";
+      prompterHtml = `<div class="p-label ${uncertain ? "" : "reveal-correct"}">${uncertain ? "Ich tippe auf …" : "Verstanden ✓"}</div>
         <div class="p-big ${cls}">${escapeHtml(commandLabel(this.lastResult.commandId))}</div>
-        <div class="p-sub">Sicherheit ${(this.lastResult.confidence * 100).toFixed(0)} % (unkalibriert) · ${this.lastResult.processingMs.toFixed(0)} ms</div>`;
+        <div class="p-sub">${sub}</div>`;
     } else if (this.lastResult) {
-      prompterHtml = `<div class="p-label">Ergebnis</div>
-        <div class="p-big bad">Nicht erkannt</div>
-        <div class="p-sub">Zu unsicher – bitte erneut versuchen.</div>`;
+      prompterHtml = `<div class="p-label">Nicht erkannt</div>
+        <div class="p-big bad">— ?</div>
+        <div class="p-sub">Nochmal: deutlich lautlos formen.</div>`;
     } else {
       const big = recording
         ? "Jetzt lautlos formen…"
@@ -1360,7 +1340,6 @@ export class SilentTypeApp {
         again.style.width = "100%";
         again.onclick = () => {
           this.lastResult = null;
-          this.lastPreviewText = "";
           this.renderView();
         };
         wrap.appendChild(again);
@@ -1408,14 +1387,12 @@ export class SilentTypeApp {
       yes.onclick = () => {
         this.copyToClipboard(commandLabel(r.commandId!));
         this.lastResult = { ...r, status: "confirmed" };
-        this.lastPreviewText = commandLabel(r.commandId!);
         this.renderView();
       };
       const no = el("button", "btn secondary") as HTMLButtonElement;
       no.textContent = "Verwerfen";
       no.onclick = () => {
         this.lastResult = null;
-        this.lastPreviewText = "";
         this.renderView();
       };
       rowc.appendChild(yes);
@@ -1448,9 +1425,6 @@ export class SilentTypeApp {
       this.lastResult = null;
     } else {
       this.lastResult = clf.predict(seq);
-      this.lastPreviewText = this.lastResult.commandId
-        ? commandLabel(this.lastResult.commandId)
-        : "";
     }
     this.renderView();
   }
