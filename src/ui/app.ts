@@ -17,6 +17,12 @@ import {
   prepare,
   leaveOneSessionOut,
 } from "../core/evaluation.ts";
+import {
+  uploadRecording,
+  cloudConsent,
+  setCloudConsent,
+  lastUpload,
+} from "../core/cloud.ts";
 import { detectDevice, isSecureContextOk } from "../platform/device.ts";
 import type {
   ClassificationResult,
@@ -56,7 +62,7 @@ interface ChallengeState {
 const APP_NAME = "understand U";
 const APP_TAGLINE = "versteht dich – ganz ohne Worte";
 // Bump on each deploy so the version is visible (helps spot browser caching).
-const BUILD = "v25 · Teilen";
+const BUILD = "v26 · Gemeinsames Lernen";
 
 /** The "half eye, half lip" logo mark (inherits currentColor). */
 function logoSvg(): string {
@@ -624,6 +630,7 @@ export class SilentTypeApp {
       videoConsent: false,
     };
     await saveRecording(rec);
+    void uploadRecording(rec, BUILD); // only uploads if the user opted in
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
   }
 
@@ -1699,6 +1706,7 @@ export class SilentTypeApp {
       videoConsent: false,
     };
     await saveRecording(rec);
+    void uploadRecording(rec, BUILD); // only uploads if the user opted in
     this.counts[commandId] = (this.counts[commandId] ?? 0) + 1;
     this.orderIndex++;
     // Visible green confirmation, then advance to the next command.
@@ -1918,6 +1926,38 @@ export class SilentTypeApp {
     };
     card.appendChild(dev);
 
+    // Opt-in: share anonymized recordings for shared learning. Default OFF.
+    const consentOn = cloudConsent();
+    const share = el("label", "auto-toggle");
+    share.style.cssText =
+      "margin-top:10px;width:100%;justify-content:space-between";
+    const stext = el("span");
+    stext.textContent = "☁️ Aufnahmen anonym fürs gemeinsame Lernen teilen";
+    const ssw = el("span", "switch" + (consentOn ? " on" : ""));
+    share.appendChild(stext);
+    share.appendChild(ssw);
+    share.onclick = () => {
+      setCloudConsent(!cloudConsent());
+      this.renderView();
+    };
+    card.appendChild(share);
+
+    const shareNote = el("p", "muted");
+    shareNote.style.cssText = "font-size:12px;margin:6px 2px 0";
+    shareNote.innerHTML = consentOn
+      ? "<b style='color:var(--accent)'>An.</b> Neue Aufnahmen werden anonym (nur Lippen-Messpunkte, kein Video/Ton/Name) in eine gemeinsame Datenbank geladen, damit die Erkennung mit der Zeit für alle besser werden kann. Du kannst das jederzeit wieder ausschalten."
+      : "Standardmäßig <b>aus</b> – dann bleibt alles nur auf diesem Gerät. Angeschaltet hilfst du, eine gemeinsame Lern-Datenbank aufzubauen.";
+    card.appendChild(shareNote);
+
+    if (this.devMode && lastUpload) {
+      const diag = el("p", "muted");
+      diag.style.cssText = "font-size:11px;margin:6px 2px 0;opacity:.8";
+      diag.textContent = lastUpload.ok
+        ? `Cloud: letzter Upload ok (HTTP ${lastUpload.status})`
+        : `Cloud: ${lastUpload.error ?? "—"}`;
+      card.appendChild(diag);
+    }
+
     const ver = el("p", "muted");
     ver.style.margin = "12px 0 0";
     ver.textContent = `Version: ${BUILD}`;
@@ -1933,9 +1973,10 @@ export class SilentTypeApp {
       <p class="muted">
         • Die Kamera ist standardmäßig <b>aus</b> und startet nur nach deinem Klick; ihre Aktivität ist oben am Logo sichtbar.<br/>
         • Verarbeitet werden ausschließlich <b>Lippen-Messpunkte</b> – <b>kein Video, kein Ton</b>, keine Gesichtserkennung zur Identifizierung.<br/>
-        • Alle Aufnahmen bleiben <b>lokal in deinem Browser</b> auf diesem Gerät. <b>Kein Upload, keine Telemetrie.</b><br/>
-        • Du kannst deine Daten jederzeit exportieren oder im Tab „Training“ unter „Deine Daten“ vollständig löschen.<br/>
-        • Einzige Ausnahme: Beim ersten Start wird das Erkennungs-Modell einmalig von Google geladen (dabei werden keine persönlichen Daten übertragen).
+        • Alle Aufnahmen bleiben standardmäßig <b>lokal in deinem Browser</b> auf diesem Gerät. <b>Keine Telemetrie.</b><br/>
+        • <b>Freiwillig teilen:</b> Nur wenn du oben „Aufnahmen anonym fürs gemeinsame Lernen teilen“ einschaltest, werden neue Aufnahmen – ausschließlich die <b>Lippen-Messpunkte</b> (kein Video, kein Ton, kein Name) – zusammen mit einer zufälligen Geräte-Kennung in eine gemeinsame Datenbank geladen, um die Erkennung langfristig zu verbessern. Standardmäßig ist das <b>aus</b>.<br/>
+        • Du kannst deine lokalen Daten jederzeit exportieren oder im Tab „Training“ unter „Deine Daten“ vollständig löschen.<br/>
+        • Einzige weitere Ausnahme: Beim ersten Start wird das Erkennungs-Modell einmalig von Google geladen (dabei werden keine persönlichen Daten übertragen).
       </p>
       <p class="muted" style="font-size:12px">Lippen-/Gesichtsdaten können als biometrienah gelten (Art. 9 DSGVO). Diese App minimiert bewusst. Für einen produktiven Einsatz ist eine fachkundige Datenschutzprüfung nötig.</p>
 
